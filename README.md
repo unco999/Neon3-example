@@ -1,5 +1,13 @@
 # Neon3 案例：背包 UI
 
+## Python 背包案例演示
+
+![Python 背包案例](docs/inventory-demo.gif)
+
+这个动画展示了 Python 端如何提交背包 Flow、上传代码生成的 RGBA 资源，
+并通过 Neon3 runtime 显示背包 UI。容量按钮对应一个带 revision 的 semantic
+intent；实际窗口和 GPU 仍由 Neon3 runtime 负责。
+
 这是一个可以单独克隆运行的 Neon3 教学案例。它展示：
 
 - 用 Python 生成声明式 NUI Flow；
@@ -29,11 +37,17 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m src.inventory_probe
 ```
 
-运行交互窗口案例：
+运行交互窗口案例（本地启动命令）：
 
 ```powershell
+Set-Location "D:\Neon3案例"
+$env:HTTP_PROXY = "http://127.0.0.1:7892"
+$env:HTTPS_PROXY = "http://127.0.0.1:7892"
 .\.venv\Scripts\python.exe -m src.inventory_demo
 ```
+
+窗口启动时会自动使用在线 `neon3-sdk` 和 GitHub Releases runtime。窗口保持运行，
+可以直接观察背包界面；按 `Ctrl+C` 关闭案例及其由 SDK 启动的服务。
 
 默认情况下 SDK 会在线解析并下载最新 Neon3 runtime。需要固定版本时：
 
