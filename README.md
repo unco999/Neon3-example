@@ -1,92 +1,52 @@
-# Neon3 案例：背包 UI
+# Neon3 Example
 
-## Python 背包案例演示
+<p align="center"><img src="assets/neon3-example-logo.png" width="160" alt="Neon3 Example" /></p>
 
-![Python 背包案例](docs/inventory-demo.gif)
+<p align="center">单文件 Python 背包案例：16/20/24 格、拖拽、Tooltip、Nine Slice。</p>
 
-这个动画展示了 Python 端如何提交背包 Flow、上传代码生成的 RGBA 资源，
-并通过 Neon3 runtime 显示背包 UI。容量按钮对应一个带 revision 的 semantic
-intent；实际窗口和 GPU 仍由 Neon3 runtime 负责。
+![背包案例](assets/inventory-demo.gif)
 
-这是一个可以单独克隆运行的 Neon3 教学案例。它展示：
+## 目录
 
-- 用 Python 生成声明式 NUI Flow；
-- 用公开 `neon3.rpc` 协议上传图片和提交 UI；
-- 用 typed input frame 驱动容量状态；
-- 用 semantic intent 处理“扩大容量”；
-- 用 `nine_slice` 绘制可伸缩的背包面板和格子；
-- 用 JSONL probe 验证 producer/consumer、revision 和最终结果。
+```text
+python/inventory.py   # 唯一案例文件：窗口 + --probe
+python/requirements.txt
+node/                  # TypeScript 版本预留
+assets/               # 素材、Logo、演示 GIF
+```
 
-案例**不读取任何本地游戏资源目录**，图片素材由示例代码生成固定的 RGBA
-像素数据。Neon3 runtime 由 `neon3-sdk` 按 GitHub Releases 的 latest 版本
-自动下载；也可以通过 `NEON_ROOT` 指定用户自己准备的 runtime bundle。
-
-## 快速开始
-
-要求 Python 3.10+。建议使用虚拟环境：
+## 启动窗口
 
 ```powershell
+git clone https://github.com/unco999/Neon3-example.git
+Set-Location Neon3-example
 py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install neon3-sdk
+\.venv\Scripts\python.exe -m pip install -r python\requirements.txt
+\.venv\Scripts\python.exe python\inventory.py
 ```
 
-运行 headless 教学探针：
+如需代理，先执行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m src.inventory_probe
-```
-
-运行交互窗口案例（本地启动命令）：
-
-```powershell
-Set-Location "D:\Neon3案例"
 $env:HTTP_PROXY = "http://127.0.0.1:7892"
 $env:HTTPS_PROXY = "http://127.0.0.1:7892"
-.\.venv\Scripts\python.exe -m src.inventory_demo
 ```
 
-窗口启动时会自动使用在线 `neon3-sdk` 和 GitHub Releases runtime。窗口保持运行，
-可以直接观察背包界面；按 `Ctrl+C` 关闭案例及其由 SDK 启动的服务。
+按 `Ctrl+C` 关闭窗口。默认由 `neon3-sdk` 在线获取 Neon3 runtime；如需使用本地
+checkout，按 SDK 约定设置 `NEON_ROOT` 和 `NEON_PROFILE` 即可。
 
-默认情况下 SDK 会在线解析并下载最新 Neon3 runtime。需要固定版本时：
+## 自动验证
 
 ```powershell
-$env:NEON3_RUNTIME_VERSION = "v0.2.2"
-.\.venv\Scripts\python.exe -m src.inventory_probe
+\.venv\Scripts\python.exe python\inventory.py --probe --out inventory-check.png
 ```
 
-需要使用本地 checkout 仅用于开发时，可以由用户自行设置：
+成功时输出 JSONL，包含资源上传、Flow 提交、frame sequence、producer/consumer
+状态和最终 `pass_result`。
 
-```powershell
-$env:NEON_ROOT = "C:\path\to\your\Neon3"
-$env:NEON_PROFILE = "debug"
-```
+## 相关项目
 
-案例源码不会硬编码或扫描该路径；路径只由 SDK 的标准 runtime 配置消费。
-
-## 代码阅读顺序
-
-1. `src/inventory_demo.py`：素材生成、Flow 声明、领域状态和服务启动。
-2. `src/inventory_probe.py`：固定输入、bounded polling、JSONL 验收。
-3. `src/flow.py`：最小 Flow 字符串，适合先学习 UI 声明语法。
-
-## 协议边界
-
-Python 只负责领域状态和协议 client，不创建 WGPU 对象、不创建窗口、不写
-Neon3 项目文件。窗口、GPU texture、buffer、pipeline 和最终合成全部由
-`neon-wgpu-runtime` 所有。示例使用已有的 `neon3-sdk`、`neon3.rpc` 和
-`neon3.event`/UI runtime API，不添加诊断专用 transport。
-
-## 测试
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-```
-
-成功的 probe 会输出类似 JSONL：
-
-```json
-{"event":"inventory.submit","frame_sequence":1,"producer":{"capacity":"small"},"result":"passed"}
-{"event":"inventory.verify","frame_sequence":2,"producer":{"intent":"inventory.capacity.expand"},"consumer":{"capacity":"medium","revision":1},"result":"passed"}
-```
+- [Neon3 Runtime](https://github.com/unco999/Neon3-CiJian)
+- [Neon3 SDK（Python / Node）](https://github.com/unco999/Neon3Sdk)
+- [PyPI: neon3-sdk](https://pypi.org/project/neon3-sdk/)
+- [npm: @neon3/sdk](https://www.npmjs.com/package/@neon3/sdk)

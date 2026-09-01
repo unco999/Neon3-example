@@ -2,6 +2,13 @@
 
 ## 0.1.0 — 2026-09-01
 
+- Consolidated the complete Python inventory demo and deterministic probe into
+  the single file `python/inventory.py`.
+- Reserved `node/` for the future TypeScript version without adding a second
+  implementation to the repository.
+- Bundled all five inventory images, the resized repository logo, and the demo
+  GIF under `assets/`.
+
 ### 新增
 
 - 从 Neon3 UI Slicer 迁移独立背包教学案例。
