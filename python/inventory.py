@@ -192,13 +192,13 @@ surface inventory-demo overlay w 1440 h 900 fill #17212B
 {item_declarations}
     panel footer row h 36 pad 8 fill #22313D line #4E6A7F radius 4
       text drag-hint value "拖动物品图标到空格"
-    panel inventory-controls column x 900 y 270 w 250 h 260 gap 12 pad 18 fill #1C2A35 line #4E6A7F radius 6
+  panel inventory-controls column x 900 y 270 w 250 h 220 gap 12 pad 18 fill #1C2A35 line #4E6A7F radius 6
     text controls-title value "背包容量"
     text controls-subtitle value "每次调整 4 格"
     button expand-button h 42 enabled $enabled value "扩大 4 格" event inventory.capacity.expand
-      button collapse-button h 42 enabled $enabled value "减少 4 格" event inventory.capacity.collapse
-      button select-apple h 28 value "选择苹果" event inventory.item.select
-      button move-apple h 28 value "移动苹果" event inventory.item.move
+    button collapse-button h 42 enabled $enabled value "减少 4 格" event inventory.capacity.collapse
+    button select-apple h 28 value "选择苹果" event inventory.item.select
+    button move-apple h 28 value "移动苹果" event inventory.item.move
     text controls-min value "最少 4 × 4"
 '''
 

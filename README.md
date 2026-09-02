@@ -35,10 +35,10 @@ $env:HTTP_PROXY = "http://127.0.0.1:7892"
 $env:HTTPS_PROXY = "http://127.0.0.1:7892"
 ```
 
-Pin the tested runtime rather than resolving latest:
+The SDK resolves the latest available runtime by default. If your runtime checkout or cache has a specific version, select it explicitly:
 
 ```powershell
-$env:NEON3_RUNTIME_VERSION = "v0.2.3"
+$env:NEON3_RUNTIME_VERSION = "<your-runtime-version>"
 $env:NEON_PROFILE = "release"
 ```
 
