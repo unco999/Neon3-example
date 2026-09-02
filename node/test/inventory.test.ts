@@ -1,0 +1,3 @@
+import {test} from "node:test"; import {strict as assert} from "node:assert"; import {initialItems,moveItems,expand,collapse,stateOf} from "../src/domain.js";
+test("capacity transitions and shared fixture move",()=>{assert.equal(expand.small,"medium");assert.equal(expand.medium,"large");assert.equal(collapse.large,"medium");const moved=moveItems(initialItems(),"apple","slot-01","slot-05","small");assert.deepEqual(stateOf("small",moved,null),{capacity:"small",apple_slot:"slot-05",hammer_slot:"slot-02",selected:null});});
+test("occupied target swaps",()=>{const items=moveItems(initialItems(),"apple","slot-01","slot-05","small");const swapped=moveItems(items,"hammer","slot-02","slot-05","small");assert.equal(swapped.find(i=>i.key==="apple")?.slot_key,"slot-02");});

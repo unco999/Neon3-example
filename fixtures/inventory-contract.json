@@ -1,0 +1,16 @@
+{
+  "capacities": {"small": 16, "medium": 20, "large": 24},
+  "initial_items": [
+    {"key": "apple", "kind": "consumable", "name": "Apple", "slot_key": "slot-01", "rarity": "common", "description": "Restores 25 health"},
+    {"key": "hammer", "kind": "tool", "name": "Repair Hammer", "slot_key": "slot-02", "rarity": "rare", "description": "Repairs equipment durability"}
+  ],
+  "events": [
+    {"intent": "inventory.item.select", "payload": {"item_id": "apple"}},
+    {"intent": "inventory.capacity.expand", "payload": {}},
+    {"intent": "inventory.item.move", "payload": {"item_id": "apple", "source_slot": "slot-01", "target_slot": "slot-05", "placement": "into"}},
+    {"intent": "inventory.capacity.expand", "payload": {}},
+    {"intent": "inventory.capacity.collapse", "payload": {}}
+  ],
+  "expected_capacity_sequence": ["small", "medium", "medium", "large", "medium"],
+  "expected_final": {"capacity": "medium", "apple_slot": "slot-05", "hammer_slot": "slot-02", "selected": "apple"}
+}

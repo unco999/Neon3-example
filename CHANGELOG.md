@@ -1,5 +1,12 @@
 # 更新日志
 
+## 0.2.0 — 2026-09-02
+
+- Fixed the Python dependency to `neon3-sdk==0.1.4` and migrated the application host to `NeonApp`, `ObservableStore`, `CollectionBinding`, `IntentRouter` and `UiSession`.
+- Added the equivalent Node.js TypeScript inventory example and committed its npm lockfile.
+- Added one shared snake_case inventory contract fixture and cross-language domain tests.
+- Documented windowed/headless operation, runtime pinning, diagnostics and release capture warnings.
+
 ## 0.1.0 — 2026-09-01
 
 - Consolidated the complete Python inventory demo and deterministic probe into

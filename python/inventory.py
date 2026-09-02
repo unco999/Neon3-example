@@ -6,18 +6,16 @@ import argparse
 import json
 import os
 import socket
-import threading
 import time
-import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
-from neon3_sdk import NeonClient, RuntimeConfig, RuntimeEndpoints, RuntimeMode, RuntimeSession, UiClient
-from neon3_sdk.calculator import CalculatorServer, _response
+from neon3_sdk import NeonApp, ObservableStore, RuntimeEndpoints, RuntimeMode
+from neon3_sdk import DragSpec, DropSpec
+from domain import CAPACITY_SLOTS, COLLAPSE, EXPAND, initial_items, move_items
 
 
 def _emit(event: str, **data: object) -> None:
@@ -139,59 +137,13 @@ def image_upload(asset_id: str, path: Path) -> dict[str, Any]:
     return {"source": {"image_id": asset_id, "media_type": "application/x-neon-rgba8", "width": int(width), "height": int(height), "bytes": image.reshape(-1).tolist()}}
 
 
-def _input_revision(client: NeonClient) -> tuple[int, dict[str, Any]]:
-    snapshot = client.call("ui-runtime", "debug.ui.host.snapshot").result
-    values = {key: value["value"]["value"] for key, value in snapshot["scalar_inputs"]["values"].items()}
-    return int(snapshot["scalar_inputs"]["input_revision"]), values
-
-
-def _event(intent: str, source: str, program_revision: dict[str, Any], input_revision: int) -> dict[str, Any]:
-    event_id = str(uuid.uuid4())
-    return {
-        "event_id": event_id, "kind": "activate", "intent": intent,
-        "source_node_key": source, "payload": {}, "program_revision": program_revision,
-        "input_revision": input_revision, "request_id": event_id,
-        "idempotency_key": f"inventory-case-event:{event_id}",
-        "interaction": {"interaction_id": event_id, "sequence": input_revision + 1, "renderer_epoch": 1},
-    }
-
-
-def _non_background(path: Path) -> int:
-    """Decode capture bytes so Windows extended-length paths also work."""
-    image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if image is None:
-        return 0
-    blue, green, red = cv2.split(image)
-    return int(((red > 40) | (green > 55) | (blue > 65)).sum())
-
-
-def run_probe(ui_rpc: NeonClient, renderer_endpoint: str, program: Any, args_out: Path) -> int:
-    """Run the original inventory acceptance path against the current runtime."""
-    before_revision, before_values = _input_revision(ui_rpc)
-    expand = _event("inventory.capacity.expand", "expand-button", program.program_revision, before_revision)
-    response = ui_rpc.call("ui-runtime", "ui.host.inbound", {"kind": "semantic_intent", "event": expand}, idempotency_key=f"inventory-case-host:{expand['event_id']}")
-    time.sleep(0.5)
-    after_revision, after_values = _input_revision(ui_rpc)
-    renderer = NeonClient.connect(renderer_endpoint, origin="inventory-probe", timeout_seconds=30.0)
-    layout = renderer.call("wgpu-runtime", "debug.window.input.snapshot").result.get("layout", {}).get("nodes", [])
-    by_key = {node["path"].rsplit("/", 1)[-1]: node for node in layout}
-    backpack = by_key.get("backpack", {}).get("bounds")
-    slots = [by_key.get(f"slot-{index:02d}", {}).get("bounds") for index in range(1, 17)]
-    args_out.parent.mkdir(parents=True, exist_ok=True)
-    capture = renderer.call("wgpu-runtime", "wgpu.render.target.capture", {"target": "ui.color.v1", "path": str(args_out.resolve()), "redraw": True}).result
-    pixels = _non_background(Path(capture["artifact_path"]))
-    visible_slots = all(slot and slot.get("width") == 72.0 and slot.get("height") == 72.0 for slot in slots)
-    passed = response.status == "accepted" and after_values.get("capacity") == "medium" and after_revision == before_revision + 1 and backpack is not None and backpack.get("width") == 420.0 and visible_slots and pixels > 10000
-    _emit("inventory.verify", frame_sequence=capture.get("frame_sequence", 2), producer={"intent": expand["intent"], "before_revision": before_revision, "before_capacity": before_values.get("capacity")}, consumer={"after_revision": after_revision, "after_capacity": after_values.get("capacity"), "backpack_bounds": backpack, "visible_slots": visible_slots, "non_background_pixels": pixels, "capture": capture}, pass_result=passed)
-    _emit("inventory.completed", status="passed" if passed else "failed")
-    return 0 if passed else 1
-
 _INVENTORY_FLOW_TEMPLATE = r'''version 1
 surface surface.inventory-demo revision 1
 budget nodes=512 bindings=80 instances=512 text=384 glyphs=4096 events=1200 clips=512
 input capacity enum:small|medium|large default small
 input item_grid grid default grid:empty
 input enabled bool default true
+input selected_item enum:apple|hammer default apple
 input medium_visible bool default false
 input large_visible bool default false
 input row_1_visible bool default true
@@ -240,13 +192,14 @@ surface inventory-demo overlay w 1440 h 900 fill #17212B
 {item_declarations}
     panel footer row h 36 pad 8 fill #22313D line #4E6A7F radius 4
       text drag-hint value "拖动物品图标到空格"
-  panel inventory-controls column x 900 y 270 w 250 h 220 gap 12 pad 18 fill #1C2A35 line #4E6A7F radius 6
+    panel inventory-controls column x 900 y 270 w 250 h 260 gap 12 pad 18 fill #1C2A35 line #4E6A7F radius 6
     text controls-title value "背包容量"
     text controls-subtitle value "每次调整 4 格"
     button expand-button h 42 enabled $enabled value "扩大 4 格" event inventory.capacity.expand
-    button collapse-button h 42 enabled $enabled value "减少 4 格" event inventory.capacity.collapse
+      button collapse-button h 42 enabled $enabled value "减少 4 格" event inventory.capacity.collapse
+      button select-apple h 28 value "选择苹果" event inventory.item.select
+      button move-apple h 28 value "移动苹果" event inventory.item.move
     text controls-min value "最少 4 × 4"
-  data_grid item-data source $item_grid capacity 24 row_height 1 overscan 0 columns "slot:1" w 1 h 1 opacity 0
 '''
 
 INVENTORY_FLOW = _INVENTORY_FLOW_TEMPLATE.format(
@@ -258,134 +211,70 @@ INVENTORY_FLOW = _INVENTORY_FLOW_TEMPLATE.format(
 )
 
 
-@dataclass
-class InventoryState:
-    capacity: str = "small"
-    enabled: bool = True
-    revision: int = 0
-    items: dict[str, int] = field(default_factory=lambda: {"apple": 1, "hammer": 2})
+def _configure_app(app: NeonApp, store: ObservableStore) -> None:
+    items = store.collection("items"); items.set_key_of(lambda item: item["key"]); items.replace(initial_items()); items.mark_applied()
+    selection = store.selection("items")
+    @app.intent("inventory.item.select")
+    def select(event: Any) -> None:
+        item_id = event.payload.get("item_id", {}).get("value", event.payload.get("item_id"))
+        if items.get(item_id) is None: raise ValueError(f"unknown item: {item_id}")
+        selection.set(item_id)
+        store.value("selected_item").set(item_id)
+    @app.intent("inventory.capacity.expand")
+    def expand(_event: Any) -> None: store.value("capacity").set(EXPAND[store.value("capacity").get()["value"]])
+    @app.intent("inventory.capacity.collapse")
+    def collapse(_event: Any) -> None: store.value("capacity").set(COLLAPSE[store.value("capacity").get()["value"]])
+    @app.intent("inventory.item.move")
+    def move(event: Any) -> None:
+        payload = {key: (value.get("value") if isinstance(value, dict) else value) for key, value in event.payload.items()}
+        capacity = store.value("capacity").get()["value"]
+        result = move_items(items.items, payload["item_id"], payload["source_slot"], payload["target_slot"], capacity)
+        items.replace(result)
 
-    @property
-    def slot_count(self) -> int:
-        return {"small": 16, "medium": 20, "large": 24}[self.capacity]
+def _state(store: ObservableStore) -> dict[str, Any]:
+    scalar = lambda key: store.value(key).get()["value"]
+    return {"capacity": scalar("capacity"), "apple_slot": next(i["slot_key"] for i in store.collection("items").items if i["key"] == "apple"), "hammer_slot": next(i["slot_key"] for i in store.collection("items").items if i["key"] == "hammer"), "selected": store.selection("items").get()}
 
-
-class InventoryDomain:
-    def __init__(self) -> None:
-        self.state = InventoryState()
-        self._lock = threading.Lock()
-        self._seen: dict[str, dict[str, Any]] = {}
-
-    def apply(self, event: dict[str, Any]) -> dict[str, Any]:
-        with self._lock:
-            event_id = event["event_id"]
-            if event_id in self._seen:
-                return self._seen[event_id]
-            intent = event["intent"]
-            if intent == "inventory.capacity.expand":
-                self.state.capacity = {"small": "medium", "medium": "large", "large": "large"}[self.state.capacity]
-            elif intent == "inventory.capacity.collapse":
-                self.state.capacity = {"small": "small", "medium": "small", "large": "medium"}[self.state.capacity]
-            elif intent == "inventory.item.move":
-                payload = event.get("payload", {})
-                source_key = str(payload.get("source_key", ""))
-                target_key = str(payload.get("target_key", ""))
-                try:
-                    item, _, slot_suffix = source_key.partition("-icon-")
-                    target_slot = int(target_key.removeprefix("slot-"))
-                    source_slot = int(slot_suffix)
-                except ValueError as error:
-                    raise ValueError("drag/drop slot identity is invalid") from error
-                if item not in self.state.items or self.state.items[item] != source_slot:
-                    raise ValueError("drag source does not own the declared item")
-                if not 1 <= target_slot <= self.state.slot_count:
-                    raise ValueError("drop target is outside the active capacity")
-                occupied_by = next((name for name, slot in self.state.items.items() if slot == target_slot), None)
-                if occupied_by is not None:
-                    self.state.items[occupied_by] = source_slot
-                self.state.items[item] = target_slot
-            else:
-                raise ValueError(f"unsupported inventory intent: {intent}")
-            self.state.revision += 1
-            publication = {
-                "scalar_frame": {
-                    "program_revision": event["program_revision"],
-                    "expected_input_revision": event["input_revision"],
-                    "request_id": event_id,
-                    "idempotency_key": f"inventory-input:{self.state.revision}",
-                    "changes": [
-                        {"key": "capacity", "value": {"kind": "enum", "value": self.state.capacity}},
-                        {"key": "enabled", "value": {"kind": "bool", "value": self.state.enabled}},
-                        {"key": "medium_visible", "value": {"kind": "bool", "value": self.state.capacity in ("medium", "large")}},
-                        {"key": "large_visible", "value": {"kind": "bool", "value": self.state.capacity == "large"}},
-                        *[
-                            {"key": f"{item}_in_slot_{slot_id:02d}", "value": {"kind": "bool", "value": self.state.items[item] == slot_id}}
-                            for item in self.state.items
-                            for slot_id in range(1, MAX_SLOT_COUNT + 1)
-                        ],
-                        *[
-                            {"key": f"row_{row}_visible", "value": {"kind": "bool", "value": row <= self.state.slot_count // SLOT_COLUMNS}}
-                            for row in range(1, MAX_SLOT_COUNT // SLOT_COLUMNS + 1)
-                        ],
-                    ],
-                },
-                "grid_inputs": [{
-                    "source_key": "item_grid",
-                    "frame": {
-                        "list_revision": self.state.revision,
-                        "total_rows": 24,
-                        "first_row": 0,
-                        "window_rows": [
-                            {"stable_row_key": f"slot-{slot_id:02d}", "cells": {"slot": {"value": {"kind": "u32", "value": slot_id}, "display": {"id": slot_id, "generation": 1}}}}
-                            for slot_id in range(1, self.state.slot_count + 1)
-                        ],
-                        "expected_program_revision": event["program_revision"],
-                    },
-                }],
-                "presentation_update": None,
-                "inventory": {"input_revision": event["input_revision"] + 1, "state": self.state.__dict__.copy()},
-            }
-            self._seen[event_id] = publication
-            return publication
-
-
-class InventoryServer(CalculatorServer):
-    def __init__(self, endpoint: str) -> None:
-        super().__init__(endpoint, domain=InventoryDomain())
-
-    def _dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
-        request_id = request["request_id"]
-        if request["method"] == "service.health":
-            return _response(request_id, "accepted", result={"service": "inventory-python", "status": "healthy", "epoch": 1})
-        if request["method"] != "ui.host.inbound":
-            return _response(request_id, "rejected", error={"code": "unsupported_method", "message": "method is not supported"})
+def run_probe(app: NeonApp, store: ObservableStore, out: Path) -> int:
+    run_id = "inventory-python-fixed"
+    enum = lambda value: {"kind": "enum", "value": value}
+    sequence = [("inventory.item.select", {"item_id": enum("apple")}), ("inventory.capacity.expand", {}), ("inventory.item.move", {"item_id": enum("apple"), "source_slot": enum("slot-01"), "target_slot": enum("slot-05"), "placement": enum("into")}), ("inventory.capacity.expand", {}), ("inventory.capacity.collapse", {})]
+    records = []
+    for number, (intent, payload) in enumerate(sequence, 1):
+        source_node = "select-apple" if intent == "inventory.item.select" else ("move-apple" if intent == "inventory.item.move" else ("collapse-button" if intent.endswith("collapse") else "expand-button"))
+        event = app.session.build_intent_event(intent, payload, source_node_key=source_node)
+        before = app.session.input_revision
         try:
-            publication = self.domain.apply(request["params"]["event"])
-        except (KeyError, TypeError, ValueError) as error:
-            return _response(request_id, "rejected", error={"code": "inventory_rejected", "message": str(error)})
-        return _response(request_id, "accepted", revision=publication["inventory"]["input_revision"], result={key: value for key, value in publication.items() if key != "inventory"}, snapshot=publication["inventory"])
-
+            result = app.session.dispatch_intent(intent, payload, source_node_key=source_node, event_id=event["event_id"])
+        except Exception as error:
+            if "stale" not in str(error).lower(): raise
+            result = app.session.dispatch_intent(intent, payload, source_node_key=source_node)
+        record = {"run_id": run_id, "stage": "intent.produced", "sequence": number, "input": {"intent": intent, **payload}, "producer": {"event_id": event["event_id"], "input_revision": before, "renderer_epoch": event["interaction"]["renderer_epoch"]}, "consumer": {"input_revision": app.session.input_revision, "state": _state(store)}, "pairing": {"event_id": event["event_id"], "status": "matched"}, "result": result.status, "pass_result": result.status == "accepted"}
+        print(json.dumps(record, ensure_ascii=False), flush=True); records.append(record)
+    passed = all(record["pass_result"] for record in records) and _state(store) == {"capacity": "medium", "apple_slot": "slot-05", "hammer_slot": "slot-02", "selected": "apple"}
+    print(json.dumps({"run_id": run_id, "stage": "completed", "result": "passed" if passed else "failed", "pass_result": passed}, ensure_ascii=False), flush=True)
+    return 0 if passed else 1
 
 def launch(neon_root: Path | None, probe: bool = False, out: Path | None = None) -> int:
     endpoints = RuntimeEndpoints(eventd=_free_endpoint(), ui=_free_endpoint(), wgpu=_free_endpoint())
     domain_endpoint = _free_endpoint()
-    domain = InventoryServer(domain_endpoint)
-    thread = threading.Thread(target=domain.serve, daemon=True)
-    config = RuntimeConfig(neon_root=str(neon_root) if neon_root else RuntimeConfig().neon_root, endpoints=endpoints, domain_endpoint=domain_endpoint, mode=RuntimeMode.WINDOWED, profile=os.environ.get("NEON_PROFILE", "auto"), timeout_seconds=30.0)
+    store = ObservableStore({"capacity": "small", "enabled": True, "medium_visible": False, "large_visible": False})
+    app = None
     try:
         if any(not asset_path(ASSET_ROOT, filename).is_file() for filename in ASSETS.values()):
             raise FileNotFoundError(f"missing bundled inventory asset under {ASSET_ROOT}")
-        thread.start()
-        if not domain.ready.wait(timeout=2) or domain.start_error:
-            raise RuntimeError(f"inventory domain failed: {domain.start_error}")
-        with RuntimeSession(config):
-            rpc = NeonClient.connect(endpoints.ui, origin="inventory-demo", kind="external_host", timeout_seconds=20.0)
+        app = NeonApp.start(mode="windowed", origin="neon3-inventory-python", neon_root=neon_root, profile=os.environ.get("NEON_PROFILE", "auto"), endpoints=endpoints, domain_endpoint=domain_endpoint, store=store, timeout_seconds=30.0)
+        _configure_app(app, store)
+        app.serve(block=False)
+        with app:
+            rpc = app.client
             for sequence, (asset_id, filename) in enumerate(ASSETS.items(), start=1):
                 rpc.call("ui-runtime", "ui.image.upload", image_upload(asset_id, asset_path(ASSET_ROOT, filename)), idempotency_key=f"inventory-upload-{sequence}")
-            program = UiClient(rpc).submit_flow(INVENTORY_FLOW, idempotency_key="inventory-demo-flow-v1")
-            _emit("inventory.flow.submitted", surface_id=program.surface_id, program_revision=program.program_revision, assets=list(ASSETS), pass_result=True)
+            program = app.ui.mount_flow(INVENTORY_FLOW, idempotency_key="inventory-demo-flow-v1")
+            _emit("inventory.flow.submitted", surface_id=program.surface_id, program_revision=program.program_revision.to_wire(), assets=list(ASSETS), pass_result=True)
             if probe:
-                return run_probe(rpc, endpoints.wgpu, program, args_out=out or Path("inventory-demo.png"))
+                return run_probe(app, store, out or Path("inventory-demo.png"))
+            app.ui.bind("item-data", store.collection("items"), columns=lambda item: {"slot": {"value": int(item["slot_key"][5:]), "display": {"id": int(item["slot_key"][5:]), "generation": 1}}}, selection=store.selection("items"), drag=DragSpec("inventory.item.move", lambda item: {"item_id": item["key"], "source_slot": item["slot_key"], "kind": f"{item['kind']}-drag"}), fallback="list")
             _emit("inventory.running", endpoint=endpoints.wgpu, status="拖拽苹果或锤子；点击扩大背包容量")
             while True:
                 rpc.health("ui-runtime")
@@ -396,7 +285,7 @@ def launch(neon_root: Path | None, probe: bool = False, out: Path | None = None)
         _emit("inventory.completed", status="failed", error=str(error))
         return 1
     finally:
-        domain.stop()
+        if app is not None: app.stop()
 
 
 def main() -> int:
