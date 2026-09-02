@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 from neon3_sdk import NeonApp, ObservableStore, RuntimeEndpoints, RuntimeMode
-from neon3_sdk import DragSpec, DropSpec
+from neon3_sdk import DragSpec
 from domain import CAPACITY_SLOTS, COLLAPSE, EXPAND, initial_items, move_items
 
 
@@ -214,6 +214,31 @@ INVENTORY_FLOW = _INVENTORY_FLOW_TEMPLATE.format(
 def _configure_app(app: NeonApp, store: ObservableStore) -> None:
     items = store.collection("items"); items.set_key_of(lambda item: item["key"]); items.replace(initial_items()); items.mark_applied()
     selection = store.selection("items")
+
+    def publish_item_slots() -> None:
+        occupied = {item["key"]: item["slot_key"] for item in items.items}
+        for item_key in ("apple", "hammer"):
+            for slot_number in range(1, MAX_SLOT_COUNT + 1):
+                store.value(f"{item_key}_in_slot_{slot_number:02d}").set(occupied[item_key] == f"slot-{slot_number:02d}")
+
+    def register_drag_catalog() -> None:
+        catalog: dict[str, dict[str, Any]] = {}
+        for item in items.items:
+            slot = item["slot_key"]
+            drag_keys = (f"{item['key']}-drag-{slot[5:]}", f"{item['key']}-icon-{slot[5:]}")
+            for drag_key in drag_keys:
+                catalog[drag_key] = item
+            app.ui.drag_source(drag_keys[0], lambda value, item=item: {
+                "item_id": item["key"], "source_slot": item["slot_key"], "kind": f"{item['kind']}-drag",
+            }, kind_of=lambda value, item=item: f"{item['kind']}-drag")
+            app.ui.drag_source(drag_keys[1], lambda value, item=item: {
+                "item_id": item["key"], "source_slot": item["slot_key"], "kind": f"{item['kind']}-drag",
+            }, kind_of=lambda value, item=item: f"{item['kind']}-drag")
+        app.router.catalog(catalog)
+
+    for slot_number in range(1, MAX_SLOT_COUNT + 1):
+        app.ui.drop_target(f"slot-{slot_number:02d}", "inventory.item.move", accepts=("consumable-drag", "tool-drag"))
+    register_drag_catalog()
     @app.intent("inventory.item.select")
     def select(event: Any) -> None:
         item_id = event.payload.get("item_id", {}).get("value", event.payload.get("item_id"))
@@ -227,9 +252,12 @@ def _configure_app(app: NeonApp, store: ObservableStore) -> None:
     @app.intent("inventory.item.move")
     def move(event: Any) -> None:
         payload = {key: (value.get("value") if isinstance(value, dict) else value) for key, value in event.payload.items()}
+        payload.setdefault("target_slot", getattr(event, "target_key", ""))
         capacity = store.value("capacity").get()["value"]
         result = move_items(items.items, payload["item_id"], payload["source_slot"], payload["target_slot"], capacity)
         items.replace(result)
+        publish_item_slots()
+        register_drag_catalog()
 
 def _state(store: ObservableStore) -> dict[str, Any]:
     scalar = lambda key: store.value(key).get()["value"]
