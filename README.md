@@ -1,52 +1,61 @@
 # Neon3 Example
 
-<p align="center"><img src="assets/neon3-example-logo.png" width="160" alt="Neon3 Example" /></p>
+**Neon3** — 把 UI 从应用程序里"拆出来" — 独立进程 · 声明式 · 多语言 · 跨渲染器
 
-<p align="center">单文件 Python 背包案例：16/20/24 格、拖拽、Tooltip、Nine Slice。</p>
+![Neon3 Example Logo](assets/neon3-example-logo.png)
 
-![背包案例](assets/inventory-demo.gif)
+Self-contained **inventory UI teaching case**: 16/20/24 grids, drag-and-drop, Tooltip, Nine Slice. Built with Python and the Neon3 SDK.
 
-## 目录
+![Inventory Demo](assets/inventory-demo.gif)
 
-```text
-python/inventory.py   # 唯一案例文件：窗口 + --probe
-python/requirements.txt
-node/                  # TypeScript 版本预留
-assets/               # 素材、Logo、演示 GIF
+## Project Structure
+
+```
+python/inventory.py       # Single-file working example
+python/requirements.txt   # Dependencies
+node/                     # TypeScript version (planned)
+assets/                   # Images, logo, demo GIF
 ```
 
-## 启动窗口
+## Quick Start
 
 ```powershell
 git clone https://github.com/unco999/Neon3-example.git
-Set-Location Neon3-example
+cd Neon3-example
 py -m venv .venv
 \.venv\Scripts\python.exe -m pip install -r python\requirements.txt
 \.venv\Scripts\python.exe python\inventory.py
 ```
 
-如需代理，先执行：
-
+If using a proxy:
 ```powershell
 $env:HTTP_PROXY = "http://127.0.0.1:7892"
 $env:HTTPS_PROXY = "http://127.0.0.1:7892"
 ```
 
-按 `Ctrl+C` 关闭窗口。默认由 `neon3-sdk` 在线获取 Neon3 runtime；如需使用本地
-checkout，按 SDK 约定设置 `NEON_ROOT` 和 `NEON_PROFILE` 即可。
+Press `Ctrl+C` to exit. The SDK automatically downloads the latest Neon3 runtime. To use a local checkout:
 
-## 自动验证
+```powershell
+$env:NEON_ROOT = "D:\Neon3-CiJian"
+$env:NEON_PROFILE = "release"
+```
+
+## Automated Verification
 
 ```powershell
 \.venv\Scripts\python.exe python\inventory.py --probe --out inventory-check.png
 ```
 
-成功时输出 JSONL，包含资源上传、Flow 提交、frame sequence、producer/consumer
-状态和最终 `pass_result`。
+Success outputs JSONL with resource upload, Flow submission, frame sequence, producer/consumer state, and final `pass_result`.
 
-## 相关项目
+## Related Projects
 
-- [Neon3 Runtime](https://github.com/unco999/Neon3-CiJian)
-- [Neon3 SDK（Python / Node）](https://github.com/unco999/Neon3Sdk)
-- [PyPI: neon3-sdk](https://pypi.org/project/neon3-sdk/)
-- [npm: @neon3/sdk](https://www.npmjs.com/package/@neon3/sdk)
+- **[Neon3 Runtime](https://github.com/unco999/Neon3-CiJian)** — Core multi-process framework
+- **[Neon3 SDK](https://github.com/unco999/Neon3Sdk)** — Python + Node.js client bindings
+- **[bevy-nui-plugins](https://github.com/unco999/bevy-nui-plugins)** — Bevy game engine integration
+- **[PyPI: neon3-sdk](https://pypi.org/project/neon3-sdk/)** — Python package
+- **[npm: @neon3/sdk](https://www.npmjs.com/package/@neon3/sdk)** — Node.js package
+
+## License
+
+Dual-licensed under MIT or Apache 2.0.
