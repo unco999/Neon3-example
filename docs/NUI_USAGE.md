@@ -28,6 +28,30 @@ surface demo overlay w 640 h 360
    `equipment.equip.iron_sword`、`quest.accept.q_herbs`。
 4. 行、按钮和文字使用固定宽度，给文字预留空间。不要让长文本决定按钮位置。
 5. Flow 重挂会恢复默认 inputs。重挂后必须重新发布完整当前状态，不能只发布本次变化。
+6. `justify` 使用 NUI 词汇：`start`、`center`、`end`、`between`、`around`、`evenly`，不要写 CSS 的 `space_between`。
+7. 不要用 `text value ""` 当 spacer。空文本是无效 IR；使用 `panel spacer grow 1`。
+8. 生成 Flow 子树时，模板字符串必须保留父节点的两空格层级；静态验证通过不代表插值后的节点在预期父节点下。
+9. `fill` 与 `line` 可用 hex；`ink` 只能使用 `token:<name>`。没有 theme token 时不要给 `ink` 填 hex。
+10. 图片可用 `fit stretch|cover|contain`。封面和横幅通常用 `cover`，Logo 用 `contain`。
+
+## 无边框窗口
+
+开发时可设置：
+
+```powershell
+$env:NEON3_WINDOW_CHROME = "borderless"
+npm run case:window -- music-player
+```
+
+无边框模式下，非交互 UI 背景可拖动原生窗口；按钮、滑块、输入框等 semantic control 保持自己的交互优先级。窗口控制按钮和显式 drag region 将作为后续公共 Flow 组件补齐。
+
+窗口控制使用保留 intent，WGPU Runtime 本地处理，不会发送给 domain host：
+
+```text
+button minimize value "-" event window.minimize
+button maximize value "+" event window.maximize
+button close value "x" event window.close
+```
 
 ## 输入与发送
 

@@ -15,6 +15,7 @@ const scenarios = {
   settings: { intent: "settings.set_value.music", node: "toggle-music", before: ["music"], after: { music: false, music_off: true } },
   chat: { intent: "chat.switch_channel.party", node: "channel-party", before: ["active_channel"], after: { active_channel: "party" } },
   "chat-text": { intent: "chat.send", node: "chat-input-send", kind: "activate", text: "跨进程消息", before: ["message_count"], after: { message_count: 2 } },
+  "music-player": { intent: "player.track.play.violet-orbit", node: "play-violet-orbit", before: ["current_track", "is_playing"], after: { current_track: "violet-orbit", is_playing: true } },
 };
 const scenario = scenarios[caseId];
 if (!scenario) throw new Error(`unknown case: ${caseId}`);

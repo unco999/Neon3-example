@@ -90,9 +90,10 @@ npm run case:window -- equipment
 npm run case:window -- crafting
 npm run case:window -- party
 npm run case:window -- settings
+npm run case:window -- music-player
 ```
 
-每个窗口都是独立案例：商店、技能树、任务日志、角色属性、聊天、装备栏、合成、组队和设置。
+每个窗口都是独立案例：商店、技能树、任务日志、角色属性、聊天、装备栏、合成、组队、设置和 Pulse 音乐播放器。
 NUI 写法与常见问题请看 [`docs/NUI_USAGE.md`](docs/NUI_USAGE.md)。
 
 ## Runtime

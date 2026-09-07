@@ -1,0 +1,102 @@
+﻿export function flow(): string {
+  return `version 1
+resource album-purple image
+resource album-gold image
+resource album-hero image
+resource album-hero-green image
+resource album-architecture image
+resource pulse-slider-track image
+resource pulse-slider-fill image
+resource pulse-slider-thumb image
+resource pulse-control image
+resource icon-menu image
+resource icon-heart image
+resource icon-previous image
+resource icon-play image
+resource icon-next image
+resource icon-shuffle image
+resource icon-repeat image
+resource icon-volume image
+resource icon-queue image
+shader pulse-glass version 6 fallback standard_ui
+shader pulse-neon-edge version 3 fallback standard_ui
+skin pulse-primary button
+  slot body idle resource pulse-control fit contain
+  slot body hover resource pulse-control fit contain
+skin pulse-volume slider
+  slot track idle resource pulse-slider-track nine_slice 4 4 4 4 border 4 4 4 4
+  slot fill active resource pulse-slider-fill nine_slice 4 4 4 4 border 4 4 4 4
+  slot thumb idle resource pulse-slider-thumb fit contain
+surface surface.music-player-demo revision 3
+budget nodes=128 bindings=32 instances=192 text=128 glyphs=2048 events=96 clips=128
+input active_view enum:home|library|playlists|favorites default home
+input current_track enum:astral-crown|violet-orbit|golden-passage|monument-zero default astral-crown
+input is_playing bool default false
+input position i32:0..600 default 108
+input duration i32:1..600 default 272
+input volume i32:0..100 default 72
+input shuffle bool default false
+input repeat enum:off|one|all default all
+input enabled bool default true
+flow music-player-lab
+surface music-player-demo overlay w 360 h 720 fill #00000000
+  panel player-shell column x 0 y 0 w 360 h 720 gap 4 pad 14 fill #00000000 radius 0 clip bounds
+    geometry cut 36 36 36 36
+    material pulse-glass parameter rim_strength 0.20
+    
+
+    panel status-row row w 332 h 16 justify between
+      text time value "9:41" w 48 h 16
+      text signal value "PULSE 72%" w 96 h 16
+    panel nav-row row w 332 h 32 gap 4 align center
+      button nav-home h 30 w 62 skin pulse-primary value "Music" event player.view.select.home
+      button nav-library h 30 w 78 skin pulse-primary value "Podcasts" event player.view.select.library
+      button nav-playlists h 30 w 54 skin pulse-primary value "Radio" event player.view.select.playlists
+      panel nav-space grow 1
+      panel menu-hit overlay w 28 h 28
+        button menu h 28 w 28 skin pulse-primary value " " event player.view.select.favorites
+        image menu-icon resource icon-menu x 8 y 8 w 14 h 14 fit contain
+    panel cover-frame overlay w 332 h 280 fill #0A1711 radius 0 clip bounds
+      geometry cut 20 20 20 20
+      material pulse-neon-edge parameter rim_strength 0.28
+      button play-violet-orbit x 0 y 0 w 1 h 1 skin pulse-primary value " " event player.track.play.violet-orbit
+      image now-art resource album-hero x 32 y 0 w 268 h 280 fit cover clip bounds radius 0 opacity 0.95
+    panel track-row row w 332 h 44 align center
+      panel track-copy column w 280 h 44 gap 0
+        text now-title value "The Last Light" h 24
+        text now-artist value "Moonchild" h 18
+      panel favorite-hit overlay w 28 h 28
+        button favorite h 28 w 28 skin pulse-primary value " " event player.track.like.astral-crown
+        image heart-icon resource icon-heart x 6 y 6 w 16 h 16 fit contain
+    slider now-progress skin pulse-volume numeric $position enabled $enabled w 332 h 10 event player.transport.seek
+    panel time-row row w 332 h 16 justify between
+      text elapsed value "1:48" w 50 h 16
+      text total value "4:32" w 50 h 16
+    panel transport row w 332 h 50 gap 22 align center justify center
+      panel previous-hit overlay w 36 h 36
+        button previous h 36 w 36 skin pulse-primary value " " event player.transport.previous
+        image previous-icon resource icon-previous x 8 y 8 w 20 h 20 fit contain
+      panel play-hit overlay w 48 h 48
+        button play-pause h 48 w 48 skin pulse-primary value " " event player.transport.play_pause
+          material pulse-neon-edge overflow 5 3 5 3 parameter rim_strength 0.38
+        image play-icon resource icon-play x 16 y 16 w 18 h 18 fit contain
+      panel next-hit overlay w 36 h 36
+        button next h 36 w 36 skin pulse-primary value " " event player.transport.next
+        image next-icon resource icon-next x 8 y 8 w 20 h 20 fit contain
+    panel mode-row row w 332 h 30 gap 36 align center justify center
+      panel shuffle-hit overlay w 24 h 24
+        button shuffle h 24 w 24 skin pulse-primary value " " event player.transport.shuffle
+        image shuffle-icon resource icon-shuffle x 4 y 4 w 16 h 16 fit contain
+      panel repeat-hit overlay w 24 h 24
+        button repeat h 24 w 24 skin pulse-primary value " " event player.transport.repeat
+        image repeat-icon resource icon-repeat x 4 y 4 w 16 h 16 fit contain
+      panel volume-hit overlay w 24 h 24
+        button volume h 24 w 24 skin pulse-primary value " " event player.volume.commit
+        image volume-icon resource icon-volume x 4 y 4 w 16 h 16 fit contain
+      panel queue-hit overlay w 24 h 24
+        button queue h 24 w 24 skin pulse-primary value " " event player.view.select.favorites
+        image queue-icon resource icon-queue x 4 y 4 w 16 h 16 fit contain
+    slider volume-slider skin pulse-volume numeric $volume enabled $enabled w 332 h 10 event player.volume.commit
+    text now-status value "PULSE LIQUID SIGNAL" h 16
+`;
+}

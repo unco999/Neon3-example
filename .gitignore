@@ -9,3 +9,9 @@ build/
 artifacts/
 python/artifacts/
 python/*.png
+
+# Node multi-case suite
+node/node_modules/
+node/dist/
+node/*.txt
+node/scripts/diagnose/*.out.txt

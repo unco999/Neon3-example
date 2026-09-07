@@ -1,6 +1,6 @@
 ﻿# 多案例测试矩阵（Case Matrix）
 
-> 环境：Node.js + TypeScript，SDK `@neon3/sdk@0.1.5`，runtime `v0.2.5`
+> 环境：Node.js + TypeScript，SDK `@neon3/sdk@0.1.5`，runtime `v0.2.6`
 > 运行方式：`node dist/src/run.js`（离线领域验证）／`node dist/src/run.js --runtime`（真实 runtime probe）
 
 ## 案例总表
@@ -17,12 +17,13 @@
 | 8 | `crafting` | 合成/锻造 | 管理类 | 配方表、材料消耗、产出结算、次数限制 | panel/text/button/branch | semantic_input, intent_dispatch | ✅ 通过 |
 | 9 | `party` | 组队 | 社交类 | 成员列表、职业、邀请/踢出、状态分层 | panel/text/button | semantic_input, intent_dispatch | ✅ 通过 |
 | 10 | `settings` | 设置面板 | 系统类 | 开关切换、滑块数值、枚举切换、复位 | panel/text/button/checkbox/slider | semantic_input, intent_dispatch, text_input | ✅ 通过 |
+| 11 | `music-player` | Pulse 音乐播放器 | 系统类 | 专辑贴图、滚动歌曲列表、当前播放、切歌、收藏、音量和 mock 播放状态 | image/panel/scroll/progress_bar/slider | semantic_input, intent_dispatch, image_upload | ✅ 通过 |
 
 ## 测试分层
 
 - **L0 离线领域验证**（无需 runtime）：纯 TS 域规则确定性跑事件序列，输出 JSONL。
-- **L1 静态 Flow 校验**（SDK 内置 `validateFlowSource` / `scanFlow`）：验证 10 个案例的 Flow 全部落在 runtime 词汇表内。
-- **L2 真实 runtime probe**（`--runtime`）：用 `RuntimeSession`(v0.2.5, headless) + `UiClient`/`UiSession` 提交 Flow + 派发 intent，验证 `accepted` 与消费者 revision 推进。
+- **L1 静态 Flow 校验**（SDK 内置 `validateFlowSource` / `scanFlow`）：验证全部案例的 Flow 都落在 runtime 词汇表内。
+- **L2 真实 runtime probe**（`--runtime`）：用 `RuntimeSession`(v0.2.6, headless) + `UiClient`/`UiSession` 提交 Flow + 派发 intent，验证 `accepted` 与消费者 revision 推进。
 
 ## 报告
 

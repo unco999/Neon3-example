@@ -20,8 +20,20 @@ import * as partyDomain from "./party/domain.js";
 import { flow as partyFlow } from "./party/flow.js";
 import * as settingsDomain from "./settings/domain.js";
 import { flow as settingsFlow } from "./settings/flow.js";
+import * as musicPlayerDomain from "./music-player/domain.js";
+import { flow as musicPlayerFlow } from "./music-player/flow.js";
 
 const SIMPLE_CASES: CaseDef<any>[] = [
+  {
+    id: "music-player", title: "Pulse 音乐播放器", category: "system",
+    scene: "低多边形音乐播放器：专辑视觉、歌曲列表、当前播放和控制栏",
+    behaviours: ["track selection", "play/pause", "favorite", "volume"],
+    flowFeatures: ["image", "panel", "scroll", "slider", "control skin", "cut geometry", "shader material", "semantic intents"],
+    requiredCapabilities: ["ui.semantic_input.v1", "ui.text_input.commit.v1", "ui.intent_dispatch.v1", "ui.image.upload.v1", "ui.component_skin.v1", "ui.geometry.cut.v1", "ui.shader.package.v1", "ui.shader.material.v1"],
+    initialState: musicPlayerDomain.initialState, apply: musicPlayerDomain.apply,
+    sequence: musicPlayerDomain.sequence, expectedFinal: musicPlayerDomain.expectedFinal,
+    stateOf: musicPlayerDomain.stateOf, flow: musicPlayerFlow,
+  },
   {
     id: "inventory", title: "背包", category: "management",
     scene: "冒险者背包：16/20/24 格容量切换，物品拖拽移动与占用交换，选中态",
@@ -177,6 +189,8 @@ function projectState(id: string, current: any, store: LiveContext["store"]) {
     put("total_power", Object.values(current.slots).reduce((sum: number, key: any) => sum + (current.bag.find((i: any) => i.key === key)?.power ?? 0), 0)); for (const key of ["head","chest","weapon","offhand","legs"]) { put(`${key}_item_equipped`, Boolean(current.slots[key])); put(`${key}_item_empty`, !current.slots[key]); }
   } else if (id === "chat") {
     put("active_channel", current.active_channel); put("message_count", current.messages.length); for (const channel of current.channels) put(`${channel}_count`, current.messages.filter((m: any) => m.channel === channel).length); put("has_messages", current.messages.length > 0); put("chat_empty", current.messages.length === 0);
+  } else if (id === "music-player") {
+    put("active_view", current.active_view); put("active_tab", current.active_tab); put("current_track", current.current_track); put("is_playing", current.is_playing); put("position", current.position); put("duration", current.duration); put("volume", current.volume); put("shuffle", current.shuffle); put("repeat", current.repeat);
   }
 }
 
@@ -197,6 +211,8 @@ function wireDomainCase<State>(def: CaseDef<State>) {
         payload[key] = (value as any)?.value ?? value;
       }
       const source = String(event.source_node_key ?? "");
+      if (intent.startsWith("player.track.play.")) payload.track_id ??= intent.slice("player.track.play.".length);
+      else if (intent.startsWith("player.track.like.")) payload.track_id ??= intent.slice("player.track.like.".length);
       if (intent === "chat.draft" || intent === "chat.send") {
         chatDraft = String(payload.text ?? event.committed_text?.value ?? chatDraft);
         payload.text ??= chatDraft;

@@ -9,6 +9,7 @@ import * as inventoryDomain from "./cases/inventory/domain.js";
 import type { InventoryState } from "./cases/inventory/domain.js";
 import * as shopDomain from "./cases/shop/domain.js";
 import type { ShopState } from "./cases/shop/domain.js";
+import { pulseShaderPackages } from "./cases/music-player/shaders.js";
 
 const caseId = process.argv[2] ?? "inventory";
 const def = caseById(caseId);
@@ -33,6 +34,7 @@ const neonRoot = process.env.NEON_ROOT
 const portOffset = Number.parseInt(process.env.NEON3_PORT_OFFSET ?? "0", 10);
 const endpoint = (port: number) => `127.0.0.1:${port + (Number.isFinite(portOffset) ? portOffset : 0)}`;
 const externalServices = process.env.NEON3_EXTERNAL === "1";
+if (process.env.NEON3_WINDOW_CHROME === "borderless") process.env.NEON_WINDOW_CHROME = "borderless";
 
 function publishState(next: Record<string, unknown>) {
   for (const [key, value] of Object.entries(next)) {
@@ -103,7 +105,25 @@ async function uploadInventoryAssets(app: NeonApp) {
     const path = resolve(assetsRoot, filename);
     const source = decodePngRgba(await readFile(path));
     const response = await app.client.call("ui-runtime", "ui.image.upload", { source: { image_id: imageId, media_type: "application/x-neon-rgba8", ...source } }, { raiseForStatus: false, idempotencyKey: `inventory-asset-${imageId}` });
-    if (response.status !== "accepted") throw new Error(`asset upload rejected: ${imageId}`);
+    if (response.status !== "accepted") throw new Error(`asset upload rejected: ${imageId}: ${JSON.stringify(response.error)}`);
+  }
+}
+
+async function uploadMusicAssets(app: NeonApp) {
+  const assets = {
+    "album-purple": "album-purple-small.png", "album-gold": "album-gold-small.png",
+    "album-hero": "album-hero-small.png", "album-hero-green": "album-hero-green.png", "album-architecture": "album-architecture-small.png",
+    "pulse-control": "pulse-control.png",
+    "pulse-slider-track": "pulse-slider-track.png", "pulse-slider-fill": "pulse-slider-fill.png",
+    "pulse-slider-thumb": "pulse-slider-thumb.png", "icon-menu": "icon-menu.png", "icon-heart": "icon-heart.png",
+    "icon-previous": "icon-previous.png", "icon-play": "icon-play.png", "icon-next": "icon-next.png",
+    "icon-shuffle": "icon-shuffle.png", "icon-repeat": "icon-repeat.png", "icon-volume": "icon-volume.png", "icon-queue": "icon-queue.png",
+  };
+  const assetsRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "assets", "music-player");
+  for (const [imageId, filename] of Object.entries(assets)) {
+    const source = decodePngRgba(await readFile(resolve(assetsRoot, filename)));
+    const response = await app.client.call("ui-runtime", "ui.image.upload", { source: { image_id: imageId, media_type: "application/x-neon-rgba8", ...source } }, { raiseForStatus: false, idempotencyKey: `music-player-asset-${imageId}` });
+    if (response.status !== "accepted") throw new Error(`asset upload rejected: ${imageId}: ${JSON.stringify(response.error)}`);
   }
 }
 
@@ -229,6 +249,23 @@ function visualFlow(source: string, id: string, value: any) {
     }
     return next;
   }
+  if (id === "music-player") {
+    const track = value.tracks?.find((item: any) => item.key === value.current_track) ?? value.tracks?.[0];
+    const cover = track?.cover ?? "album-hero";
+    const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+    return source
+      .replace(/(image now-art resource )[^\s]+/, `$1${cover}`)
+      .replace(/(image mini-art resource )[^\s]+/, `$1${cover}`)
+      .replace(/(text now-title value )"[^"]*"/, `$1"${track?.title ?? ""}"`)
+      .replace(/(text now-artist value )"[^"]*"/, `$1"${track?.artist ?? ""}"`)
+      .replace(/(text now-album value )"[^"]*"/, `$1"${track?.album ?? ""}"`)
+      .replace(/(text elapsed value )"[^"]*"/, `$1"${formatTime(value.position ?? 0)}"`)
+      .replace(/(text total value )"[^"]*"/, `$1"${formatTime(track?.duration ?? value.duration ?? 0)}"`)
+      .replace(/(text mini-title value )"[^"]*"/, `$1"${track?.title ?? ""}"`)
+      .replace(/(text mini-artist value )"[^"]*"/, `$1"${track?.artist ?? ""}"`)
+      .replace(/(text volume-value value )"[^"]*"/, `$1"${value.volume ?? 0}"`)
+      .replace(/(text player-status value )"[^"]*"/, `$1"${value.is_playing ? "PLAYING" : "READY"}"`);
+  }
   return source;
 }
 
@@ -288,6 +325,14 @@ const app = await NeonApp.start({
   ui: endpoint(39102),
   wgpu: endpoint(39103),
   domain: endpoint(39104),
+  ...(caseId === "music-player" ? {
+    windowBackdrop: {
+      kind: "acrylic" as const,
+      blurAmount: 6,
+      tint: "#000000",
+      tintOpacity: 0.20,
+    },
+  } : {}),
   ...(neonRoot ? { neonRoot } : {}),
 });
 
@@ -446,6 +491,10 @@ if (def.id === "shop") {
 }
 
 if (def.id === "inventory") await uploadInventoryAssets(app);
+if (def.id === "music-player") {
+  for (const pkg of pulseShaderPackages()) await app.registerShader(pkg);
+  await uploadMusicAssets(app);
+}
 
 const intents = [] as string[];
 for (const intent of intents) {
