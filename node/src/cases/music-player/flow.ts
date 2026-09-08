@@ -20,6 +20,7 @@ resource icon-volume image
 resource icon-queue image
 shader pulse-glass version 6 fallback standard_ui
 shader pulse-neon-edge version 3 fallback standard_ui
+shader pulse-flow-light version 1 fallback standard_ui
 skin pulse-primary button
   slot body idle resource pulse-control fit contain
   slot body hover resource pulse-control fit contain
@@ -43,7 +44,8 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
   panel player-shell column x 0 y 0 w 360 h 720 gap 4 pad 14 fill #00000000 radius 0 clip bounds
     geometry cut 36 36 36 36
     material pulse-glass parameter rim_strength 0.20
-    
+    panel flow-light-layer overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer behind_glass
+      material pulse-flow-light
 
     panel status-row row w 332 h 16 justify between
       text time value "9:41" w 48 h 16
