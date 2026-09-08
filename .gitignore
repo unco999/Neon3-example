@@ -15,3 +15,24 @@ node/node_modules/
 node/dist/
 node/*.txt
 node/scripts/diagnose/*.out.txt
+
+# Local visual debugging output and private design source.
+node/*.log
+node/*.out.log
+node/*.err.log
+node/*.png
+node/run-*.bat
+node/visual-acceptance/
+node/shots/
+node/temp/
+node/src/bin/
+shots/
+temp/
+ae_*.png
+nui*.png
+sdk*.png
+NEON3_*.aep
+Adobe After Effects */
+assets/ui_elements/
+assets/music-player/icon-waveform.png
+run-pulse-flow.bat
