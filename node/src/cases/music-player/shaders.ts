@@ -165,7 +165,7 @@ function packageFor(packageId: string, version: number, source: string): ShaderP
 
 export function pulseShaderPackages(): ShaderPackage[] {
   return [
-    packageFor("pulse-glass", 6, pulseGlass),
+    packageFor("pulse-glass", 7, pulseGlass),
     packageFor("pulse-flow-light", 2, pulseFlowLight),
     packageFor("pulse-neon-edge", 3, pulseNeonEdge),
   ];
