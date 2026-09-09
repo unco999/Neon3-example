@@ -527,4 +527,20 @@ if (initialChanges.length > 0) {
 }
 console.log(`Opened ${def.title} (${def.id}) on Neon3 runtime ${runtimeVersion}. Press Ctrl+C to close.`);
 
+// Splash screen transition sequence for music-player
+if (def.id === "music-player") {
+  const publishAppView = async (value: string) => {
+    store.value("app_view").set(value);
+    store.value("show_splash").set(value === "splash");
+    store.value("show_transition").set(value === "transition");
+    const changes = declaredInputChanges(def.flow(), store.changedScalars());
+    console.log("[splash] publishing: " + JSON.stringify(changes));
+    await app.ui.publish(changes);
+    store.markApplied();
+    console.log("[splash] app_view -> " + value);
+  };
+  setTimeout(() => void publishAppView("transition"), 2500);
+  setTimeout(() => void publishAppView("player"), 4200);
+}
+
 process.once("SIGINT", () => { domainServer.close(); void app.stop(); });

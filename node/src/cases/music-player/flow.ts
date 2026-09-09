@@ -18,10 +18,12 @@ resource icon-shuffle image
 resource icon-repeat image
 resource icon-volume image
 resource icon-queue image
-shader pulse-glass version 20 fallback standard_ui
-shader pulse-neon-edge version 14 fallback standard_ui
-shader pulse-neon-ring version 10 fallback standard_ui
-shader pulse-flow-light version 17 fallback standard_ui
+shader pulse-glass version 27 fallback standard_ui
+shader pulse-neon-edge version 24 fallback standard_ui
+shader pulse-neon-ring version 12 fallback standard_ui
+shader pulse-flow-light version 20 fallback standard_ui
+shader pulse-splash version 1 fallback standard_ui
+shader pulse-scanline version 1 fallback standard_ui
 skin pulse-primary button
   slot body idle resource pulse-control fit contain
   slot body hover resource pulse-control fit contain
@@ -41,6 +43,9 @@ input shuffle bool default false
 input repeat enum:off|one|all default all
 input enabled bool default true
 input _anim_tick i32:0..1000000 default 0
+input app_view enum:splash|transition|player default splash
+input show_splash bool default true
+input show_transition bool default false
 flow music-player-lab
 surface music-player-demo overlay w 360 h 720 fill #00000000
   panel flow-light-layer overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer behind_glass
@@ -106,5 +111,15 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
   panel shell-edge-light overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer overlay
     geometry cut 36 36 36 36
     material pulse-neon-edge
+  panel splash-overlay x 0 y 0 w 360 h 720 fill #000000 radius 0 visible $show_splash
+    material pulse-splash
+    panel splash-content column x 0 y 0 w 360 h 720 align center justify center gap 12
+      text splash-title value "MUSIC PLAYER" w 280 h 36 align center
+      panel splash-underline w 120 h 3 fill #8CFF1A
+      text splash-subtitle value "LISTEN TO WHAT YOU CAN'T SEE" w 280 h 20 align center
+  panel splash-overlay-tr x 0 y 0 w 360 h 720 fill #000000 radius 0 visible $show_transition
+    material pulse-splash
+  panel scanline-overlay overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer overlay visible $show_transition
+    material pulse-scanline
 `;
 }
