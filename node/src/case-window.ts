@@ -1,4 +1,4 @@
-import { NeonApp, NeonClient, ObservableStore, UiClient } from "@neon3/sdk";
+import { NeonApp, NeonClient, ObservableStore, RenderClient, UiClient } from "@neon3/sdk";
 import { inflateSync } from "node:zlib";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -328,9 +328,9 @@ const app = await NeonApp.start({
   ...(caseId === "music-player" ? {
     windowBackdrop: {
       kind: "acrylic" as const,
-      blurAmount: 6,
-      tint: "#000000",
-      tintOpacity: 0.20,
+      blurAmount: Number(process.env.NEON_BLUR_AMOUNT ?? "8"),
+      tint: process.env.NEON_BACKDROP_TINT ?? "#000000",
+      tintOpacity: Number(process.env.NEON_BACKDROP_TINT_OPACITY ?? "0.28"),
     },
   } : {}),
   ...(neonRoot ? { neonRoot } : {}),
@@ -349,6 +349,15 @@ const app = await NeonApp.start({
     kind: "external_host",
   });
   (app.ui.session as unknown as { ui: UiClient }).ui = new UiClient(app.client);
+
+  // Also rebuild the render (wgpu) client. The SDK default app_host kind is
+  // rejected by v0.2.5 for wgpu.shader.register, so shader packages would
+  // silently fall back to standard_ui without this.
+  const renderClient = new NeonClient(endpoint(39103), {
+    origin: `neon3-case-${def.id}-render`,
+    kind: "external_host",
+  });
+  app.render = new RenderClient(renderClient, "wgpu-runtime", renderClient);
 }
 
 publishState(state);
@@ -491,26 +500,19 @@ if (def.id === "shop") {
 }
 
 if (def.id === "inventory") await uploadInventoryAssets(app);
+if (def.id === "music-player") await uploadMusicAssets(app);
+
+// Register custom shader packages BEFORE mountFlow so the materials are
+// available when the Flow references them.
 if (def.id === "music-player") {
-  for (const pkg of pulseShaderPackages()) await app.registerShader(pkg);
-  await uploadMusicAssets(app);
+  for (const pkg of pulseShaderPackages()) {
+    const result = await app.render!.registerShader(pkg);
+    console.log(`[shader-register] ${pkg.package_id} v${pkg.version}:`, JSON.stringify(result));
+  }
+  const shaderState = await app.render!.shaderState();
+  console.log("[shader-state]", JSON.stringify(shaderState));
 }
 
-const intents = [] as string[];
-for (const intent of intents) {
-  app.intent(intent)((event: any) => {
-    try {
-      const next = def.apply(intent, unwrapPayload(event.payload), state) as Record<string, unknown>;
-      Object.assign(state, next);
-      publishState(state);
-      return { status: "accepted", state: next };
-    } catch (error) {
-      return { status: "rejected", error: (error as Error).message };
-    }
-  });
-}
-
-// SDK 0.1.5 performs a capability preflight before ui.flow.submit. Its
 // NeonApp wrapper is incompatible with the v0.2.5 windowed forwarder, while
 // the actual typed ui.flow.submit path is valid. Skip only that redundant
 // preflight for this visual entry point.
@@ -524,4 +526,5 @@ if (initialChanges.length > 0) {
   store.markApplied();
 }
 console.log(`Opened ${def.title} (${def.id}) on Neon3 runtime ${runtimeVersion}. Press Ctrl+C to close.`);
+
 process.once("SIGINT", () => { domainServer.close(); void app.stop(); });
