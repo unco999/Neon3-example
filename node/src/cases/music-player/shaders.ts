@@ -639,6 +639,45 @@ function packageFor(packageId: string, version: number, source: string): ShaderP
   };
 }
 
+// Page transition shader — diagonal sweep reveal controlled by view.extras[8][2]
+// progress 0..0.5: sweep covers screen (opaque), 0.5: fully covered, 0.5..1: sweep reveals
+const pulsePageTransition = `
+fn material(input: MaterialInput) -> vec4<f32> {
+  let p = input.local_position;
+  let progress = clamp(view.extras[8][2], 0.0, 1.0);
+
+  let scan_dir = vec2<f32>(0.7071, 0.7071);
+  let pixel_proj = p.x * scan_dir.x + p.y * scan_dir.y;
+
+  let cover_phase = select(progress * 2.0, (1.0 - progress) * 2.0, progress > 0.5);
+  let scan_pos = -0.2 + cover_phase * 1.8;
+  let scan_dist = pixel_proj - scan_pos;
+
+  let noise_val = fract(sin(dot(p * 18.0, vec2<f32>(127.1, 311.7))) * 43758.5453);
+  let fracture = (noise_val - 0.5) * 0.12;
+  let reveal = smoothstep(-0.05, 0.05, scan_dist + fracture);
+  let coverage = 1.0 - reveal;
+
+  let line_core = exp(-pow(abs(scan_dist) * 24.0, 1.3)) * 2.0;
+  let line_glow = exp(-pow(abs(scan_dist) * 8.0, 1.1)) * 0.6;
+  let sweep_color = vec3<f32>(0.35, 1.0, 0.06);
+  let hot_color = vec3<f32>(0.78, 1.0, 0.14);
+  let line_rgb = mix(sweep_color, hot_color, 0.5) * (line_core + line_glow);
+
+  let bg_deep = vec3<f32>(0.008, 0.02, 0.008);
+  let grid_f = fract(p * 24.0);
+  let grid_line = (1.0 - smoothstep(0.0, 0.04, min(grid_f.x, grid_f.y))) * 0.04;
+  let bg_rgb = bg_deep + grid_line * vec3<f32>(0.1, 0.4, 0.02);
+
+  let edge_fade = smoothstep(0.0, 0.08, progress) * smoothstep(1.0, 0.92, progress);
+  let alpha = clamp(coverage * edge_fade, 0.0, 1.0);
+  let rgb = bg_rgb * coverage + line_rgb;
+
+  if (alpha < 0.01) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  return vec4<f32>(rgb, alpha);
+}
+`;
+
 export function pulseShaderPackages(): ShaderPackage[] {
   return [
     packageFor("pulse-glass", 27, pulseGlass),
@@ -648,5 +687,6 @@ export function pulseShaderPackages(): ShaderPackage[] {
     packageFor("pulse-splash", 2, pulseSplashSource(SPLASH_REVEAL_SECONDS)),
     packageFor("pulse-scanline", 1, pulseScanline),
     packageFor("pulse-audio-viz", 6, pulseAudioViz),
+    packageFor("pulse-page-transition", 1, pulsePageTransition),
   ];
 }

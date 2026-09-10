@@ -166,6 +166,7 @@ async function uploadMusicAssets(app: NeonApp) {
     "pulse-slider-thumb": "pulse-slider-thumb.png", "icon-menu": "icon-menu.png", "icon-heart": "icon-heart.png",
     "icon-previous": "icon-previous.png", "icon-play": "icon-play.png", "icon-pause": "icon-pause.png", "icon-next": "icon-next.png",
     "icon-shuffle": "icon-shuffle.png", "icon-repeat": "icon-repeat.png", "icon-volume": "icon-volume.png", "icon-queue": "icon-queue.png", "icon-equalizer": "icon-equalizer.png",
+    "icon-home": "icon-home.png", "icon-settings": "icon-settings.png",
   };
   const assetsRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "assets", "music-player");
   for (const [imageId, filename] of Object.entries(assets)) {
@@ -583,6 +584,9 @@ if (def.id === "music-player") {
     kind: "external_host",
   });
 
+  // Page transition progress (-1 = no transition, 0..1 = active)
+  let transitionProgress = -1;
+
   // Upload audio frame to runtime ~60fps
   const audioUploadTimer = setInterval(async () => {
     if (!audioPlayer.isPlaying) return;
@@ -596,7 +600,8 @@ if (def.id === "music-player") {
       for (let i = 0; i < 8; i++) {
         extras.push([frame.spectrum[i * 4], frame.spectrum[i * 4 + 1], frame.spectrum[i * 4 + 2], frame.spectrum[i * 4 + 3]]);
       }
-      extras.push([frame.energy, frame.bass, frame.mid, frame.treble]);
+      const midVal = transitionProgress >= 0 ? transitionProgress : frame.mid;
+      extras.push([frame.energy, frame.bass, midVal, frame.treble]);
       extras.push([frame.centroid, frame.onset, frame.beat, frame.mode]);
       await audioWgpuClient.call("wgpu-runtime", "wgpu.ui.set_view_extras", {
         extras,
@@ -651,9 +656,79 @@ if (def.id === "music-player") {
     publishAudioState();
   });
 
+  // === Playlist page transition with sweep-light reveal ===
+  const publishPageState = async () => {
+    const changes = declaredInputChanges(def.flow(), store.changedScalars());
+    if (changes.length > 0) {
+      await app.ui.publish(changes);
+      store.markApplied();
+    }
+  };
+
+  let transitionRunning = false;
+  const transitionTo = (showPlaylist: boolean) => {
+    if (transitionRunning) return;
+    transitionRunning = true;
+    store.value("page_transition").set(true);
+    void publishPageState();
+
+    const duration = 1000; // 1 second total
+    const startTime = Date.now();
+    let pageSwapped = false;
+
+    const animFrame = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1.0);
+      transitionProgress = progress;
+
+      // Swap pages at 50% (when sweep fully covers screen)
+      if (!pageSwapped && progress >= 0.5) {
+        pageSwapped = true;
+        store.value("player_visible").set(!showPlaylist);
+        store.value("playlist_visible").set(showPlaylist);
+        void publishPageState();
+      }
+
+      if (progress < 1.0) {
+        setTimeout(animFrame, 16);
+      } else {
+        transitionProgress = -1;
+        store.value("page_transition").set(false);
+        void publishPageState();
+        transitionRunning = false;
+        console.log(`[page] transition to ${showPlaylist ? "playlist" : "player"} complete`);
+      }
+    };
+    setTimeout(animFrame, 50);
+  };
+
+  app.router.on("playlist.open", () => {
+    console.log("[page] opening playlist");
+    void transitionTo(true);
+  });
+
+  app.router.on("playlist.close", () => {
+    console.log("[page] closing playlist");
+    void transitionTo(false);
+  });
+
+  app.router.on("playlist.settings", () => {
+    console.log("[page] playlist settings clicked");
+    // TODO: open settings panel / directory configuration
+  });
+
   (globalThis as any).__audioPlayer = audioPlayer;
   (globalThis as any).__audioUploadTimer = audioUploadTimer;
   console.log("[audio] engine initialized with playback controls");
+
+  // Stop audio on any exit path (ALT+F4, close button, SIGINT, etc.)
+  const stopAudioOnExit = () => {
+    try { audioPlayer.stop(); } catch { /* ignore */ }
+    try { clearInterval(audioUploadTimer); } catch { /* ignore */ }
+  };
+  process.once("SIGINT", stopAudioOnExit);
+  process.once("SIGTERM", stopAudioOnExit);
+  process.once("exit", stopAudioOnExit);
 
   // Auto-play for testing
   setTimeout(() => {
