@@ -190,7 +190,7 @@ function projectState(id: string, current: any, store: LiveContext["store"]) {
   } else if (id === "chat") {
     put("active_channel", current.active_channel); put("message_count", current.messages.length); for (const channel of current.channels) put(`${channel}_count`, current.messages.filter((m: any) => m.channel === channel).length); put("has_messages", current.messages.length > 0); put("chat_empty", current.messages.length === 0);
   } else if (id === "music-player") {
-    put("active_view", current.active_view); put("active_tab", current.active_tab); put("current_track", current.current_track); put("is_playing", current.is_playing); put("position", current.position); put("duration", current.duration); put("volume", current.volume); put("shuffle", current.shuffle); put("repeat", current.repeat);
+    put("active_view", current.active_view); put("active_tab", current.active_tab); put("current_track", current.current_track); put("is_playing", current.is_playing); put("is_paused", !current.is_playing); put("position", current.position); put("duration", current.duration); put("volume", current.volume); put("shuffle", current.shuffle); put("repeat", current.repeat);
   }
 }
 

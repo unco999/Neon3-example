@@ -1,4 +1,4 @@
-import { NeonApp, NeonClient, ObservableStore, RenderClient, UiClient } from "@neon3/sdk";
+import { EventClient, NeonApp, NeonClient, ObservableStore, RenderClient, UiClient } from "@neon3/sdk";
 import { inflateSync } from "node:zlib";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -10,6 +10,53 @@ import type { InventoryState } from "./cases/inventory/domain.js";
 import * as shopDomain from "./cases/shop/domain.js";
 import type { ShopState } from "./cases/shop/domain.js";
 import { pulseShaderPackages } from "./cases/music-player/shaders.js";
+
+/**
+ * FNV-1a 32-bit hash - matches the constant used in WGSL shader event IDs.
+ */
+function fnv1a32(str: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Subscribe to a named GPU shader event. Runtime publishes shader.event
+ * to eventd when a material calls emit_shader_event(id, payload).
+ */
+async function onShaderEvent(
+  app: NeonApp,
+  eventName: string,
+  callback: (payload: number[]) => void,
+): Promise<void> {
+  const targetId = fnv1a32(eventName);
+  // Use external_host kind — the local runtime rejects SDK-default app_host
+  // for event subscriptions (same reason ui/render clients are rebranded).
+  const eventdEndpoint = (app.events as unknown as { endpoint?: string } | null)?.endpoint
+    ?? "127.0.0.1:39101";
+  const eventClient = new EventClient(eventdEndpoint, {
+    origin: "neon3-case-shader-events",
+    kind: "external_host",
+  });
+  const sub = await eventClient.subscribe({ name: "shader.event" });
+  console.log("[shader-event] subscribed to " + eventName + " (id=" + targetId + ")");
+  (async () => {
+    // typedEvents defaults to a 10s recv timeout; pass a long horizon so the
+    // subscription stays alive across idle frames. The runtime only publishes
+    // shader.event when a material actually emits, so gaps are normal.
+    for await (const env of sub.typedEvents("shader.event", 86400000)) {
+      const p = env.payload as { event_id: number; payload: number[] };
+      if (p && p.event_id === targetId) {
+        callback(p.payload ?? []);
+      }
+    }
+  })().catch((error) => console.warn("[shader-event] subscription error:", error));
+}
+
+
 
 const caseId = process.argv[2] ?? "inventory";
 const def = caseById(caseId);
@@ -113,16 +160,18 @@ async function uploadMusicAssets(app: NeonApp) {
   const assets = {
     "album-purple": "album-purple-small.png", "album-gold": "album-gold-small.png",
     "album-hero": "album-hero-small.png", "album-hero-green": "album-hero-green.png", "album-architecture": "album-architecture-small.png",
-    "pulse-control": "pulse-control.png",
+    "pulse-control": "pulse-control.png", "pulse-control-hover": "pulse-control-hover.png",
     "pulse-slider-track": "pulse-slider-track.png", "pulse-slider-fill": "pulse-slider-fill.png",
     "pulse-slider-thumb": "pulse-slider-thumb.png", "icon-menu": "icon-menu.png", "icon-heart": "icon-heart.png",
-    "icon-previous": "icon-previous.png", "icon-play": "icon-play.png", "icon-next": "icon-next.png",
-    "icon-shuffle": "icon-shuffle.png", "icon-repeat": "icon-repeat.png", "icon-volume": "icon-volume.png", "icon-queue": "icon-queue.png",
+    "icon-previous": "icon-previous.png", "icon-play": "icon-play.png", "icon-pause": "icon-pause.png", "icon-next": "icon-next.png",
+    "icon-shuffle": "icon-shuffle.png", "icon-repeat": "icon-repeat.png", "icon-volume": "icon-volume.png", "icon-queue": "icon-queue.png", "icon-equalizer": "icon-equalizer.png",
   };
   const assetsRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "assets", "music-player");
   for (const [imageId, filename] of Object.entries(assets)) {
     const source = decodePngRgba(await readFile(resolve(assetsRoot, filename)));
-    const response = await app.client.call("ui-runtime", "ui.image.upload", { source: { image_id: imageId, media_type: "application/x-neon-rgba8", ...source } }, { raiseForStatus: false, idempotencyKey: `music-player-asset-${imageId}` });
+    console.log(`[asset] uploading ${imageId} (${source.width}x${source.height})`);
+    const response = await app.client.call("ui-runtime", "ui.image.upload", { source: { image_id: imageId, media_type: "application/x-neon-rgba8", ...source } }, { raiseForStatus: false, idempotencyKey: `music-player-asset-${imageId}-v2` });
+    console.log(`[asset] ${imageId}: ${response.status}`);
     if (response.status !== "accepted") throw new Error(`asset upload rejected: ${imageId}: ${JSON.stringify(response.error)}`);
   }
 }
@@ -540,21 +589,22 @@ if (def.id === "music-player") {
     store.markApplied();
     console.log("[splash] app_view -> " + value);
   };
-  // Player hidden initially, splash shows alone.
-  // At 0.5s player becomes visible, splash scan-reveals over a bounded 6s
-  // window. At 6.2s splash is removed completely.
-  setTimeout(() => {
-    store.value("player_visible").set(true);
-    const changes = declaredInputChanges(def.flow(), store.changedScalars());
-    void app.ui.publish(changes).then(() => store.markApplied());
-    console.log("[splash] player revealed, scan begins");
-  }, 500);
-  setTimeout(() => {
+  // Player visible from the start (flow default). The splash material runs a
+  // 6s diagonal scan-reveal driven by the runtime clock. When the sweep fully
+  // reveals the player, the shader emits `pulse.splash.complete`; we listen
+  // for that GPU event and tear down the splash layer — no hard-coded timeout.
+  let splashCompleteHandled = false;
+  const splashSubscribedAt = Date.now();
+  void onShaderEvent(app, "pulse.splash.complete", (payload) => {
+    if (splashCompleteHandled) return;
+    splashCompleteHandled = true;
+    const elapsedMs = Date.now() - splashSubscribedAt;
+    console.log("[splash] event fired after " + elapsedMs + "ms, shader t=" + (payload[0] ?? "?") + "s");
     store.value("show_splash").set(false);
     const changes = declaredInputChanges(def.flow(), store.changedScalars());
     void app.ui.publish(changes).then(() => store.markApplied());
-    console.log("[splash] scan complete, splash removed");
-  }, 6200);
+    console.log("[splash] shader event pulse.splash.complete -> splash removed");
+  });
 }
 
 process.once("SIGINT", () => { domainServer.close(); void app.stop(); });
