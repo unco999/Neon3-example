@@ -46,11 +46,12 @@ input _anim_tick i32:0..1000000 default 0
 input app_view enum:splash|transition|player default splash
 input show_splash bool default true
 input show_transition bool default false
+input player_visible bool default true
 flow music-player-lab
 surface music-player-demo overlay w 360 h 720 fill #00000000
   panel flow-light-layer overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer behind_glass
     material pulse-flow-light
-  panel player-shell column x 0 y 0 w 360 h 720 gap 4 pad 14 fill #00000000 radius 0 clip bounds
+  panel player-shell column x 0 y 0 w 360 h 720 gap 4 pad 14 fill #00000000 radius 0 clip bounds visible $player_visible
     geometry cut 36 36 36 36
     material pulse-glass
 
@@ -65,9 +66,8 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
       panel menu-hit overlay w 28 h 28
         button menu h 28 w 28 skin pulse-primary value " " event player.view.select.favorites
         image menu-icon resource icon-menu x 8 y 8 w 14 h 14 fit contain
-    panel cover-frame overlay w 332 h 280 fill #00000000 radius 0 clip bounds
+    panel cover-frame overlay w 332 h 280 fill #00000000 line #00000000 border_width 0 radius 0 clip bounds
       geometry cut 20 20 20 20
-      material pulse-neon-edge overflow 4 4 4 4
       button play-violet-orbit x 0 y 0 w 1 h 1 skin pulse-primary value " " event player.track.play.violet-orbit
       image now-art resource album-hero x 32 y 0 w 268 h 280 fit cover clip bounds radius 0 opacity 0.95
     panel track-row row w 332 h 44 align center
@@ -108,18 +108,20 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
         image queue-icon resource icon-queue x 4 y 4 w 16 h 16 fit contain
     slider volume-slider skin pulse-volume numeric $volume enabled $enabled w 332 h 10 event player.volume.commit
     text now-status value "PULSE LIQUID SIGNAL" h 16
-  panel shell-edge-light overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer overlay
+  panel shell-edge-light overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer overlay visible $player_visible
     geometry cut 36 36 36 36
     material pulse-neon-edge
-  panel splash-overlay x 0 y 0 w 360 h 720 fill #000000 radius 0 visible $show_splash
-    material pulse-splash
-    panel splash-content column x 0 y 0 w 360 h 720 align center justify center gap 12
-      text splash-title value "MUSIC PLAYER" w 280 h 36 align center
-      panel splash-underline w 120 h 3 fill #8CFF1A
-      text splash-subtitle value "LISTEN TO WHAT YOU CAN'T SEE" w 280 h 20 align center
-  panel splash-overlay-tr x 0 y 0 w 360 h 720 fill #000000 radius 0 visible $show_transition
+  panel splash-overlay-tr x 0 y 0 w 360 h 720 fill #00000000 radius 0 visible $show_transition
     material pulse-splash
   panel scanline-overlay overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer overlay visible $show_transition
     material pulse-scanline
+  panel splash-overlay overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer overlay visible $show_splash
+    material pulse-splash
+    panel splash-content column x 24 y 0 w 312 h 720 fill #00000000 line #00000000 border_width 0 align start justify end gap 6
+      text splash-kicker value "|  MUSIC" w 280 h 16
+      text splash-title value "PLAYER" w 280 h 28
+      text splash-subtitle value "LISTEN TO WHAT YOU CAN'T SEE" w 280 h 16
+      panel splash-underline w 160 h 2 fill #8CFF1A
+      panel splash-spacer h 24 fill #00000000 border_width 0
 `;
 }

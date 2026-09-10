@@ -3,78 +3,26 @@ import { shaderSourceDigest, type ShaderPackage } from "@neon3/sdk";
 const encoder = new TextEncoder();
 
 // ============================================================================
-// pulse-glass v12 — deep black glass with FLOWING diagonal specular bands
+// pulse-glass v12 — deep black glass without content-crossing highlights
 //
 // User requirements:
 //   1. More black — base alpha 0.72, near-black body
-//   2. Visible motion — both specular bands drift slowly sideways over time
-//   3. High contrast — bands go bright (near-white-hot), body stays pure dark
+//   2. Native acrylic supplies the real backdrop treatment
+//   3. No diagonal specular bands over the player content
 // ============================================================================
 const pulseGlass = `
 fn material(input: MaterialInput) -> vec4<f32> {
-  let t = input.time_seconds;
   let p = input.local_position;
 
-  // Bottom-left region: fully transparent, no glass at all
-  // BL quadrant: p.x < 0.5 && p.y > 0.5
-  let bl_x = step(0.5, p.x);
-  let bl_y = step(0.5, 1.0 - p.y);
-  let in_bl = (1.0 - bl_x) * (1.0 - bl_y);
-  if (in_bl > 0.5) {
-    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-  }
+  // Keep the bottom-left reveal, but fade both quadrant edges instead of
+  // creating a hard rectangular transparency boundary.
+  let left_fade = 1.0 - smoothstep(0.38, 0.62, p.x);
+  let bottom_fade = smoothstep(0.38, 0.62, p.y);
+  let transparent_mask = left_fade * bottom_fade;
+  let glass_alpha = 0.55 * (1.0 - transparent_mask);
 
-  // near-pure black glass
-  let glass_rgb = vec3<f32>(0.001, 0.002, 0.0015);
-  let glass_alpha = 0.55;
-
-  // color gradient: dark = green, bright = yellow
-  let green_dim = vec3<f32>(0.38, 1.0, 0.04);
-  let yellow_bright = vec3<f32>(0.76, 1.0, 0.10);
-
-  // Rotate UVs for diagonal specular bands (~24 deg)
-  let ang = 0.42;
-  let ca = cos(ang);
-  let sa = sin(ang);
-
-  // TOP-LEFT diagonal highlight
-  let tl_rx = (p.x - 0.0) * ca - (p.y - 0.0) * sa;
-  let tl_ry = (p.x - 0.0) * sa + (p.y - 0.0) * ca;
-  let tl_length = 1.0 - smoothstep(0.12, 0.50, tl_ry);
-  let tl_core = 1.0 - smoothstep(0.0, 0.014, abs(tl_rx - 0.02));
-  let tl_glow = exp(-pow(abs(tl_rx - 0.02) * 7.0, 1.5)) * 0.4;
-  let tl_core_mask = tl_core * tl_length;
-  let tl_glow_mask = tl_glow * tl_length;
-  let tl_breath = 0.60 + 0.40 * (0.5 + 0.5 * sin(t * 1.6) + 0.3 * sin(t * 2.7 + 1.0)) / 1.3;
-  let tl_highlight = (tl_core_mask + tl_glow_mask) * tl_breath;
-
-  // BOTTOM-RIGHT diagonal highlight
-  let br_rx = (p.x - 1.0) * ca - (p.y - 1.0) * sa;
-  let br_ry = (p.x - 1.0) * sa + (p.y - 1.0) * ca;
-  let br_length = 1.0 - smoothstep(0.12, 0.50, -br_ry);
-  let br_core = 1.0 - smoothstep(0.0, 0.014, abs(br_rx + 0.02));
-  let br_glow = exp(-pow(abs(br_rx + 0.02) * 7.0, 1.5)) * 0.4;
-  let br_core_mask = br_core * br_length;
-  let br_glow_mask = br_glow * br_length;
-  let br_breath = 0.55 + 0.45 * (0.5 + 0.5 * sin(t * 1.3 + 2.0) + 0.3 * sin(t * 2.2 + 0.5)) / 1.3;
-  let br_highlight = (br_core_mask + br_glow_mask) * br_breath;
-
-  let edge = 1.0 - smoothstep(0.0, 0.008, input.geometry_edge);
-
-  let total_hl = min(tl_highlight + br_highlight, 1.0);
-  let core_hl = tl_core_mask * tl_breath + br_core_mask * br_breath;
-
-  // color by brightness: brighter -> more yellow, dimmer -> more green
-  let hl_color = mix(green_dim, yellow_bright, smoothstep(0.0, 0.7, total_hl));
-  let core_color = mix(green_dim, yellow_bright, smoothstep(0.2, 0.9, core_hl));
-
-  let rgb = glass_rgb
-          + core_color * core_hl * 0.85
-          + hl_color * (total_hl - core_hl) * 0.7
-          + green_dim * edge * 0.06;
-  let alpha = glass_alpha + total_hl * 0.12 + edge * 0.01;
-
-  return vec4<f32>(rgb, clamp(alpha, 0.0, 0.78));
+  // Keep the player shell dark; the native acrylic backdrop owns blur and tint.
+  return vec4<f32>(0.001, 0.002, 0.0015, glass_alpha);
 }
 `;
 
@@ -293,64 +241,190 @@ fn material(input: MaterialInput) -> vec4<f32> {
 `;
 
 const pulseSplash = `
+fn splash_hash(p: vec2<f32>) -> f32 {
+  return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+}
+
+fn splash_noise(p: vec2<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(splash_hash(i + vec2<f32>(0.0, 0.0)), splash_hash(i + vec2<f32>(1.0, 0.0)), u.x),
+    mix(splash_hash(i + vec2<f32>(0.0, 1.0)), splash_hash(i + vec2<f32>(1.0, 1.0)), u.x),
+    u.y
+  );
+}
+
+fn splash_shard(p: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>, angle: f32) -> f32 {
+  let q = p - center;
+  let ca = cos(angle);
+  let sa = sin(angle);
+  let rx = q.x * ca - q.y * sa;
+  let ry = q.x * sa + q.y * ca;
+  let body = (1.0 - smoothstep(half_size.x - 0.012, half_size.x + 0.012, abs(rx)))
+           * (1.0 - smoothstep(half_size.y - 0.012, half_size.y + 0.012, abs(ry)));
+  let tip = 1.0 - smoothstep(0.0, half_size.y, abs(ry) + abs(rx) * 0.42);
+  return max(body, tip * body);
+}
+
 fn material(input: MaterialInput) -> vec4<f32> {
   let t = input.time_seconds;
   let p = input.local_position;
 
-  let black = vec3<f32>(0.0, 0.0, 0.0);
-  let green_dim = vec3<f32>(0.12, 0.45, 0.02);
-  let green_mid = vec3<f32>(0.38, 1.0, 0.05);
-  let yellow_bright = vec3<f32>(0.82, 1.0, 0.12);
+  // Colors
+  let bg_deep = vec3<f32>(0.008, 0.02, 0.008);
+  let green_dim = vec3<f32>(0.10, 0.42, 0.02);
+  let green_mid = vec3<f32>(0.35, 1.0, 0.06);
+  let yellow_bright = vec3<f32>(0.78, 1.0, 0.14);
+  let white_hot = vec3<f32>(0.9, 0.95, 0.85);
 
-  let ang = 0.55;
-  let ca = cos(ang);
-  let sa = sin(ang);
+  // === BACKGROUND GRID ===
+  let grid_scale = 24.0;
+  let grid_pos = p * grid_scale;
+  let grid_f = fract(grid_pos);
+  let grid_line = (1.0 - smoothstep(0.0, 0.04, min(grid_f.x, grid_f.y))) * 0.06;
+  let grid_pulse = 0.5 + 0.5 * sin(t * 1.2 + p.y * 6.0);
+  let grid = grid_line * (0.4 + grid_pulse * 0.6);
 
-  let crx = (p.x - 0.62) * ca - (p.y - 0.38) * sa;
-  let cry = (p.x - 0.62) * sa + (p.y - 0.38) * ca;
-  let cw = 0.32;
-  let cl = 0.52;
-  let in_crystal = (1.0 - smoothstep(0.0, 0.012, abs(crx) - cw))
-                 * (1.0 - smoothstep(0.0, 0.012, abs(cry) - cl));
+  // === RADIAL GLOW from center ===
+  let center = vec2<f32>(0.5, 0.42);
+  let dist_c = distance(p, center);
+  let radial_glow = exp(-dist_c * dist_c * 6.0) * 0.15;
 
-  let facet_a = (1.0 - smoothstep(0.0, 0.006, abs(crx + 0.14))) * in_crystal;
-  let facet_b = (1.0 - smoothstep(0.0, 0.006, abs(crx - 0.06))) * in_crystal;
-  let facet_c = (1.0 - smoothstep(0.0, 0.006, abs(cry + 0.18))) * in_crystal;
-  let facet_d = (1.0 - smoothstep(0.0, 0.006, abs(cry - 0.10))) * in_crystal;
+  // === MAIN CRYSTAL (rotated diamond) ===
+  let ang1 = 0.65;
+  let ca1 = cos(ang1);
+  let sa1 = sin(ang1);
+  let c1x = (p.x - 0.5) * ca1 - (p.y - 0.42) * sa1;
+  let c1y = (p.x - 0.5) * sa1 + (p.y - 0.42) * ca1;
+  let c1w = 0.22;
+  let c1h = 0.38;
+  let in_c1 = (1.0 - smoothstep(0.0, 0.008, abs(c1x) - c1w))
+            * (1.0 - smoothstep(0.0, 0.008, abs(c1y) - c1h));
+  let c1_edge = (1.0 - smoothstep(0.0, 0.005, abs(abs(c1x) - c1w)))
+              + (1.0 - smoothstep(0.0, 0.005, abs(abs(c1y) - c1h)));
+  let c1_facet1 = (1.0 - smoothstep(0.0, 0.004, abs(c1x + 0.08))) * in_c1;
+  let c1_facet2 = (1.0 - smoothstep(0.0, 0.004, abs(c1x - 0.05))) * in_c1;
+  let c1_facet3 = (1.0 - smoothstep(0.0, 0.004, abs(c1y + 0.12))) * in_c1;
+  let c1_inner = in_c1 * (0.25 + 0.2 * sin(c1x * 12.0 + t * 0.5) + 0.15 * sin(c1y * 8.0));
 
-  let facet_var = 0.35 + 0.25 * sin(crx * 9.0 + 1.0) + 0.2 * sin(cry * 7.0);
+  // === SECONDARY CRYSTAL (smaller, offset) ===
+  let ang2 = -0.35;
+  let ca2 = cos(ang2);
+  let sa2 = sin(ang2);
+  let c2x = (p.x - 0.78) * ca2 - (p.y - 0.65) * sa2;
+  let c2y = (p.x - 0.78) * sa2 + (p.y - 0.65) * ca2;
+  let c2w = 0.1;
+  let c2h = 0.18;
+  let in_c2 = (1.0 - smoothstep(0.0, 0.006, abs(c2x) - c2w))
+            * (1.0 - smoothstep(0.0, 0.006, abs(c2y) - c2h));
+  let c2_edge = (1.0 - smoothstep(0.0, 0.004, abs(abs(c2x) - c2w)))
+              + (1.0 - smoothstep(0.0, 0.004, abs(abs(c2y) - c2h)));
 
-  let crystal_edge = (1.0 - smoothstep(0.0, 0.006, abs(abs(crx) - cw)))
-                   + (1.0 - smoothstep(0.0, 0.006, abs(abs(cry) - cl)));
-  let crystal_edge_glow = exp(-pow(max(abs(crx) - cw, 0.0) * 12.0, 1.3)) * 0.3
-                        + exp(-pow(max(abs(cry) - cl, 0.0) * 12.0, 1.3)) * 0.3;
+  // Broken translucent shards keep the splash graphic angular while the scan
+  // edge below controls the actual reveal of the player behind it.
+  let shard_noise = 0.45 + 0.55 * splash_noise(p * 14.0 + vec2<f32>(t * 0.03, 0.0));
+  let shard_a = splash_shard(p, vec2<f32>(0.23, 0.40), vec2<f32>(0.13, 0.44), -0.22);
+  let shard_b = splash_shard(p, vec2<f32>(0.56, 0.54), vec2<f32>(0.10, 0.34), 0.34);
+  let shard_c = splash_shard(p, vec2<f32>(0.78, 0.30), vec2<f32>(0.08, 0.28), -0.42);
+  let shards = (shard_a * 0.42 + shard_b * 0.30 + shard_c * 0.24) * shard_noise;
 
+  // === TRIANGLE PRISM (top-left) ===
+  let tri_p = p - vec2<f32>(0.18, 0.22);
+  let tri_ang = 0.4;
+  let tri_rx = tri_p.x * cos(tri_ang) - tri_p.y * sin(tri_ang);
+  let tri_ry = tri_p.x * sin(tri_ang) + tri_p.y * cos(tri_ang);
+  let tri_h = 0.16;
+  let tri_w = 0.12;
+  let in_tri = (1.0 - smoothstep(0.0, 0.006, abs(tri_rx) - tri_w * (1.0 - abs(tri_ry) / tri_h)))
+             * step(-tri_h, tri_ry) * step(tri_ry, tri_h);
+  let tri_edge = (1.0 - smoothstep(0.0, 0.004, abs(abs(tri_rx) - tri_w * (1.0 - abs(tri_ry) / tri_h)))) * in_tri;
+
+  // === ENERGY PARTICLES ===
+  var particles = 0.0;
+  for (var i = 0; i < 18; i = i + 1) {
+    let fi = f32(i);
+    let px = splash_hash(vec2<f32>(fi, 1.0));
+    let py = splash_hash(vec2<f32>(fi, 2.0));
+    let speed = 0.15 + splash_hash(vec2<f32>(fi, 3.0)) * 0.25;
+    let phase = splash_hash(vec2<f32>(fi, 4.0)) * 6.28;
+    let ppx = fract(px + t * speed * 0.1);
+    let ppy = fract(py + t * speed * 0.06 + sin(t * 0.5 + phase) * 0.02);
+    let pd = distance(p, vec2<f32>(ppx, ppy));
+    let psize = 0.004 + splash_hash(vec2<f32>(fi, 5.0)) * 0.006;
+    particles = particles + exp(-pd * pd / (psize * psize)) * (0.5 + 0.5 * sin(t * 2.0 + phase));
+  }
+
+  // === CORNER HUD BRACKETS ===
+  let bracket_len = 0.06;
+  let bracket_w = 0.003;
+  let tl_bracket = (1.0 - smoothstep(0.0, bracket_w, p.x - 0.04)) * (1.0 - smoothstep(0.0, bracket_w, p.y - 0.04))
+                 * (step(p.x, 0.04 + bracket_len) + step(p.y, 0.04 + bracket_len) - 1.0);
+  let br_bracket = (1.0 - smoothstep(0.0, bracket_w, 0.96 - p.x)) * (1.0 - smoothstep(0.0, bracket_w, 0.96 - p.y))
+                 * (step(0.96 - bracket_len, p.x) + step(0.96 - bracket_len, p.y) - 1.0);
+  let hud = max(tl_bracket, br_bracket) * 0.6;
+
+  // === INTERNAL ENERGY LINES in main crystal ===
+  let el1 = exp(-pow(abs(c1x - 0.03 + sin(t * 0.6) * 0.1) * 25.0, 1.4)) * in_c1 * 0.4;
+  let el2 = exp(-pow(abs(c1y + 0.06 + cos(t * 0.45) * 0.12) * 22.0, 1.4)) * in_c1 * 0.35;
+  let el3 = exp(-pow(abs(c1x + c1y * 0.4 - 0.02 + sin(t * 0.8) * 0.06) * 18.0, 1.4)) * in_c1 * 0.25;
+
+  // === BREATHING ===
+  let breath = 0.7 + 0.3 * sin(t * 0.9);
+
+  // === TOTAL ENERGY ===
+  let total = grid * 0.5
+            + radial_glow
+            + c1_inner * breath * 0.8
+            + (c1_facet1 + c1_facet2 + c1_facet3) * 0.3
+            + c1_edge * 0.9
+            + in_c2 * 0.3 * breath
+            + c2_edge * 0.7
+            + in_tri * 0.25
+            + tri_edge * 0.6
+            + particles * 0.45
+            + hud * 0.5
+            + el1 + el2 + el3
+            + shards;
+
+  let color = mix(green_dim, yellow_bright, smoothstep(0.2, 0.75, total));
+  let hot = smoothstep(0.7, 1.0, total);
+  let rgb = bg_deep + color * total * 0.9 + white_hot * hot * 0.3;
+
+  // === SCAN REVEAL: diagonal sweep from top-left to bottom-right ===
+  // The runtime clock starts before Flow/assets finish loading. Keep a long,
+  // bounded window so the first visible splash still begins covered and has
+  // time to reveal the player from the upper-left toward the lower-right.
+  let scan_start_t = 0.0;
+  let scan_end_t = 6.0;
+  let scan_progress = clamp((t - scan_start_t) / (scan_end_t - scan_start_t), 0.0, 1.0);
+
+  // Diagonal direction (top-left to bottom-right)
   let scan_dir = vec2<f32>(0.7071, 0.7071);
-  let scan_proj = p.x * scan_dir.x + p.y * scan_dir.y;
-  let scan_pos = fract(t * 0.22) * 1.6 - 0.3;
-  let scan_dist = abs(scan_proj - scan_pos);
-  let scan_core = exp(-pow(scan_dist * 18.0, 1.5)) * 1.8;
-  let scan_glow = exp(-pow(scan_dist * 6.0, 1.3)) * 0.45;
+  let pixel_proj = p.x * scan_dir.x + p.y * scan_dir.y;
+  // scan line position along diagonal: from -0.2 (before top-left) to 1.6 (past bottom-right)
+  let scan_pos = -0.2 + scan_progress * 1.8;
+  let scan_dist = pixel_proj - scan_pos;
 
-  let e1 = exp(-pow(abs(crx - 0.04 + sin(t * 0.7) * 0.12) * 22.0, 1.5)) * in_crystal * 0.35;
-  let e2 = exp(-pow(abs(cry - 0.08 + cos(t * 0.55) * 0.14) * 20.0, 1.5)) * in_crystal * 0.3;
-  let e3 = exp(-pow(abs(crx + cry * 0.3 - 0.1 + sin(t * 0.9) * 0.08) * 16.0, 1.5)) * in_crystal * 0.2;
+  // Reveal: pixels before scan line (already swept) become transparent
+  let reveal_width = 0.06;
+  let fracture_offset = (splash_noise(p * 18.0 + vec2<f32>(t * 0.04, -t * 0.02)) - 0.5) * 0.14;
+  let reveal = smoothstep(-reveal_width, reveal_width, scan_dist + fracture_offset);
+  // reveal=1 means still covered (splash visible), reveal=0 means revealed (splash transparent)
 
-  let breath = 0.75 + 0.25 * sin(t * 0.8);
+  // Scan line glow at the leading edge
+  let line_core = exp(-pow(abs(scan_dist) * 28.0, 1.3)) * 1.5;
+  let line_glow = exp(-pow(abs(scan_dist) * 10.0, 1.1)) * 0.5;
 
-  let total = in_crystal * (0.35 + facet_var * 0.3) * breath
-            + (facet_a + facet_b + facet_c + facet_d) * 0.25
-            + crystal_edge * 0.7
-            + crystal_edge_glow * 0.4
-            + scan_core * 0.7
-            + scan_glow * 0.35
-            + e1 + e2 + e3;
+  // Add scan line brightness to rgb
+  let scan_color = mix(green_mid, yellow_bright, 0.6);
+  let broken_line = 0.40 + 0.60 * splash_noise(vec2<f32>(p.x * 26.0, p.y * 9.0) + vec2<f32>(t * 0.06, 0.0));
+  let final_rgb = rgb + scan_color * (line_core * broken_line + line_glow) * reveal;
 
-  let color = mix(green_dim, yellow_bright, smoothstep(0.25, 0.85, total));
-  let rgb = color * total;
-  let bg = vec3<f32>(0.012, 0.028, 0.012);
-  let final_rgb = bg + rgb;
-  return vec4<f32>(final_rgb, 1.0);
+  let alpha = clamp(reveal, 0.0, 1.0);
+
+  return vec4<f32>(final_rgb, alpha);
 }
 `;
 
@@ -402,7 +476,7 @@ export function pulseShaderPackages(): ShaderPackage[] {
     packageFor("pulse-flow-light", 20, pulseFlowLight),
     packageFor("pulse-neon-edge", 24, pulseNeonEdge),
     packageFor("pulse-neon-ring", 12, pulseNeonRing),
-    packageFor("pulse-splash", 1, pulseSplash),
+    packageFor("pulse-splash", 2, pulseSplash),
     packageFor("pulse-scanline", 1, pulseScanline),
   ];
 }

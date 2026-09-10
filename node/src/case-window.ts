@@ -533,14 +533,28 @@ if (def.id === "music-player") {
     store.value("app_view").set(value);
     store.value("show_splash").set(value === "splash");
     store.value("show_transition").set(value === "transition");
+    store.value("player_visible").set(value === "player");
     const changes = declaredInputChanges(def.flow(), store.changedScalars());
     console.log("[splash] publishing: " + JSON.stringify(changes));
     await app.ui.publish(changes);
     store.markApplied();
     console.log("[splash] app_view -> " + value);
   };
-  setTimeout(() => void publishAppView("transition"), 2500);
-  setTimeout(() => void publishAppView("player"), 4200);
+  // Player hidden initially, splash shows alone.
+  // At 0.5s player becomes visible, splash scan-reveals over a bounded 6s
+  // window. At 6.2s splash is removed completely.
+  setTimeout(() => {
+    store.value("player_visible").set(true);
+    const changes = declaredInputChanges(def.flow(), store.changedScalars());
+    void app.ui.publish(changes).then(() => store.markApplied());
+    console.log("[splash] player revealed, scan begins");
+  }, 500);
+  setTimeout(() => {
+    store.value("show_splash").set(false);
+    const changes = declaredInputChanges(def.flow(), store.changedScalars());
+    void app.ui.publish(changes).then(() => store.markApplied());
+    console.log("[splash] scan complete, splash removed");
+  }, 6200);
 }
 
 process.once("SIGINT", () => { domainServer.close(); void app.stop(); });
