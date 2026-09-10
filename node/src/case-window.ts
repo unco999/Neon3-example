@@ -10,6 +10,7 @@ import type { InventoryState } from "./cases/inventory/domain.js";
 import * as shopDomain from "./cases/shop/domain.js";
 import type { ShopState } from "./cases/shop/domain.js";
 import { pulseShaderPackages } from "./cases/music-player/shaders.js";
+import { AudioPlayer } from "./cases/music-player/audio-engine.js";
 
 /**
  * FNV-1a 32-bit hash - matches the constant used in WGSL shader event IDs.
@@ -554,12 +555,118 @@ if (def.id === "music-player") await uploadMusicAssets(app);
 // Register custom shader packages BEFORE mountFlow so the materials are
 // available when the Flow references them.
 if (def.id === "music-player") {
+  // Register custom shaders via wgpu RPC
+  const wgpuShaderClient = new NeonClient(endpoint(39103), {
+    origin: `neon3-case-${def.id}-shader`,
+    kind: "external_host",
+  });
   for (const pkg of pulseShaderPackages()) {
-    const result = await app.render!.registerShader(pkg);
+    const result = await wgpuShaderClient.call("wgpu-runtime", "wgpu.shader.register", { package: pkg }, { raiseForStatus: false });
     console.log(`[shader-register] ${pkg.package_id} v${pkg.version}:`, JSON.stringify(result));
   }
-  const shaderState = await app.render!.shaderState();
+  const shaderState = await wgpuShaderClient.call("wgpu-runtime", "wgpu.shader.state", {}, { raiseForStatus: false });
   console.log("[shader-state]", JSON.stringify(shaderState));
+
+  // === Audio Engine ===
+  const audioPlayer = new AudioPlayer();
+  const testAudioPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "assets", "music-player", "snowflake.mp3");
+  try {
+    await audioPlayer.loadFile(testAudioPath);
+    console.log(`[audio] loaded snowflake, duration=${audioPlayer.duration.toFixed(1)}s`);
+  } catch (err) {
+    console.warn("[audio] failed to load test track:", err);
+  }
+
+  // Dedicated wgpu client for audio frame uploads
+  const audioWgpuClient = new NeonClient(endpoint(39103), {
+    origin: `neon3-case-${def.id}-audio`,
+    kind: "external_host",
+  });
+
+  // Upload audio frame to runtime ~60fps
+  const audioUploadTimer = setInterval(async () => {
+    if (!audioPlayer.isPlaying) return;
+    const frame = audioPlayer.frame;
+    try {
+      // Pack audio data into the generic 10 x vec4 extras slot:
+      //   extras[0..7] = spectrum[0..31]
+      //   extras[8]    = [energy, bass, mid, treble]
+      //   extras[9]    = [centroid, onset, 0, 0]
+      const extras: number[][] = [];
+      for (let i = 0; i < 8; i++) {
+        extras.push([frame.spectrum[i * 4], frame.spectrum[i * 4 + 1], frame.spectrum[i * 4 + 2], frame.spectrum[i * 4 + 3]]);
+      }
+      extras.push([frame.energy, frame.bass, frame.mid, frame.treble]);
+      extras.push([frame.centroid, frame.onset, frame.beat, frame.mode]);
+      await audioWgpuClient.call("wgpu-runtime", "wgpu.ui.set_view_extras", {
+        extras,
+      }, { raiseForStatus: false });
+    } catch { /* ignore transient upload errors */ }
+    // Update playback position
+    store.value("position").set(Math.floor(audioPlayer.position));
+    store.value("duration").set(Math.floor(audioPlayer.duration));
+    const posChanges = declaredInputChanges(def.flow(), store.changedScalars());
+    if (posChanges.length > 0) {
+      void app.ui.publish(posChanges).catch(() => undefined);
+      store.markApplied();
+    }
+  }, 16);
+
+  // Intercept playback control events
+  const publishAudioState = () => {
+    store.value("is_playing").set(audioPlayer.isPlaying);
+    store.value("is_paused").set(!audioPlayer.isPlaying);
+    store.value("position").set(Math.floor(audioPlayer.position));
+    store.value("duration").set(Math.floor(audioPlayer.duration));
+    const changes = declaredInputChanges(def.flow(), store.changedScalars());
+    if (changes.length > 0) {
+      void app.ui.publish(changes).catch(() => undefined);
+      store.markApplied();
+    }
+  };
+
+  app.router.on("player.transport.play_pause", () => {
+    if (audioPlayer.isPlaying) audioPlayer.pause();
+    else audioPlayer.play();
+    publishAudioState();
+    console.log(`[audio] ${audioPlayer.isPlaying ? "playing" : "paused"}`);
+  });
+
+  app.router.on("player.transport.next", () => {
+    audioPlayer.stop();
+    audioPlayer.play();
+    publishAudioState();
+    console.log("[audio] next track");
+  });
+
+  app.router.on("player.transport.previous", () => {
+    audioPlayer.seek(0);
+    publishAudioState();
+    console.log("[audio] previous track");
+  });
+
+  app.router.on("player.transport.seek", (event: any) => {
+    const pos = Number(event.payload?.value?.value ?? event.payload?.value ?? 0);
+    audioPlayer.seek(pos);
+    publishAudioState();
+  });
+
+  (globalThis as any).__audioPlayer = audioPlayer;
+  (globalThis as any).__audioUploadTimer = audioUploadTimer;
+  console.log("[audio] engine initialized with playback controls");
+
+  // Auto-play for testing
+  setTimeout(() => {
+    audioPlayer.play();
+    store.value("is_playing").set(true);
+    store.value("is_paused").set(false);
+    const changes = declaredInputChanges(def.flow(), store.changedScalars());
+    if (changes.length > 0) {
+      void app.ui.publish(changes).catch(() => undefined);
+      store.markApplied();
+    }
+    console.log("[audio] auto-play started");
+  }, 2000);
 }
 
 // NeonApp wrapper is incompatible with the v0.2.5 windowed forwarder, while

@@ -29,8 +29,9 @@ shader pulse-glass version 27 fallback standard_ui
 shader pulse-neon-edge version 24 fallback standard_ui
 shader pulse-neon-ring version 12 fallback standard_ui
 shader pulse-flow-light version 20 fallback standard_ui
-shader pulse-splash version 1 fallback standard_ui
+shader pulse-splash version 2 fallback standard_ui
 shader pulse-scanline version 1 fallback standard_ui
+shader pulse-audio-viz version 6 fallback standard_ui
 skin pulse-primary button
   slot body idle resource pulse-control fit contain
   slot body hover resource pulse-control-hover fit contain
@@ -65,7 +66,7 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
 
     panel status-row row w 332 h 16 justify between
       text time value "9:41" w 48 h 16
-      text signal value "PULSE 72%" w 96 h 16
+      text signal value "NeonMusicPlayer" w 140 h 16
     panel nav-row row w 332 h 32 gap 4 align center
       button nav-home h 30 w 62 skin pulse-primary value "Music" event player.view.select.home
       button nav-library h 30 w 78 skin pulse-primary value "Podcasts" event player.view.select.library
@@ -113,8 +114,9 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
       panel queue-hit overlay w 32 h 32
         button queue h 32 w 32 value " " fill #00000000 line #00000000 border_width 0 event player.view.select.favorites
         image queue-icon resource icon-queue x 0 y 0 w 32 h 32 fit contain
-    slider volume-slider skin pulse-volume numeric $volume enabled $enabled w 332 h 10 event player.volume.commit
-    text now-status value "PULSE LIQUID SIGNAL" h 16
+    panel audio-viz overlay w 332 h 200 fill #00000000 line #00000000 border_width 0 radius 0 composition_layer overlay
+      material pulse-audio-viz
+
   panel shell-edge-light overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer overlay visible $player_visible
     geometry cut 36 36 36 36
     material pulse-neon-edge

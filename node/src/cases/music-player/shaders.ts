@@ -1,4 +1,24 @@
-import { shaderSourceDigest, type ShaderPackage } from "@neon3/sdk";
+// FNV-1a 64-bit hash — must match runtime's shader_source_digest() exactly
+function fnv1a64(bytes: Uint8Array): string {
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  const mask = (1n << 64n) - 1n;
+  for (let i = 0; i < bytes.length; i++) {
+    hash ^= BigInt(bytes[i]);
+    hash = (hash * prime) & mask;
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
+interface ShaderPackage {
+  package_id: string;
+  version: number;
+  source_digest: string;
+  source_bytes: number[];
+  entry_point: string;
+  fallback: string;
+  parameters: unknown[];
+}
 
 const encoder = new TextEncoder();
 
@@ -390,12 +410,228 @@ fn material(input: MaterialInput) -> vec4<f32> {
 }
 `;
 
+
+// ============================================================================
+// pulse-audio-viz v6 — Unified neon green, aggressive audio reactivity
+//
+// 5 modes: waveform, cube, sphere, heart, lissajous.
+// All modes heavily driven by spectrum: jitter, pulse, rotation, deformation.
+// Unified neon green color with energy-driven brightness.
+//
+// View extras: extras[0..7]=spectrum[0..31], extras[8]=(energy,bass,mid,treble),
+//              extras[9]=(centroid,onset,beat,mode)
+const pulseAudioViz = `
+fn spec(i: i32) -> f32 {
+  let idx = clamp(i, 0, 31);
+  return view.extras[idx / 4][idx % 4];
+}
+
+fn dist_to_seg(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+  let dir = b - a;
+  let len2 = dot(dir, dir);
+  if (len2 < 1e-6) { return length(p - a); }
+  let proj = clamp(dot(p - a, dir) / len2, 0.0, 1.0);
+  return length(p - (a + dir * proj));
+}
+
+fn project(p: vec3<f32>, ry: f32, rx: f32) -> vec2<f32> {
+  let cy = cos(ry); let sy = sin(ry);
+  let x1 = p.x * cy + p.z * sy;
+  let z1 = -p.x * sy + p.z * cy;
+  let cx = cos(rx); let sx = sin(rx);
+  let y1 = p.y * cx - z1 * sx;
+  let z2 = p.y * sx + z1 * cx;
+  let persp = 1.8 / (2.5 + z2);
+  return vec2<f32>(x1 * persp, y1 * persp);
+}
+
+fn d_waveform(pos: vec2<f32>, t: f32, energy: f32, bass: f32, treble: f32, centroid: f32) -> f32 {
+  let NUM = 128.0;
+  let amp = (0.3 + energy * 0.9) * (0.5 + bass * 1.0);
+  let t1 = t * (40.0 + centroid * 60.0);
+  let jitter_gain = 0.08 + treble * 0.2;
+  var min_d = 1e5;
+  var prev = vec2<f32>(-1.0, 0.0);
+  for (var i: i32 = 0; i <= 128; i++) {
+    let f = f32(i) / NUM;
+    let idx = f * 31.0;
+    let i0 = i32(floor(idx));
+    let i1 = min(i0 + 1, 31);
+    let s = mix(spec(i0), spec(i1), idx - f32(i0));
+    let x = (f - 0.5) * 2.0;
+    let jit = sin(f * 100.0 + t1) * jitter_gain * (0.3 + s) + sin(f * 611.0 + t * 140.0) * treble * 0.04;
+    let y = s * amp + jit;
+    let pt = vec2<f32>(x, y);
+    if (i > 0) { min_d = min(min_d, dist_to_seg(pos, prev, pt)); }
+    prev = pt;
+  }
+  return min_d;
+}
+
+fn d_cube(pos: vec2<f32>, t: f32, energy: f32, bass: f32, treble: f32, centroid: f32, onset: f32) -> f32 {
+  let base_size = 0.35 + energy * 0.4 + bass * 0.2 + onset * 0.15;
+  let rs = 0.8 + centroid * 2.5 + treble * 1.0;
+  var min_d = 1e5;
+  for (var e: i32 = 0; e < 12; e++) {
+    var a_idx = 0; var b_idx = 0;
+    if (e < 4) { a_idx = e; b_idx = (e + 1) % 4; }
+    else if (e < 8) { a_idx = 4 + (e - 4); b_idx = 4 + ((e - 4 + 1) % 4); }
+    else { a_idx = e - 8; b_idx = e - 8 + 4; }
+    let ja = sin(f32(a_idx) * 17.3 + t * (80.0 + treble * 100.0)) * treble * 0.08;
+    let jb = sin(f32(b_idx) * 23.7 + t * (90.0 + treble * 110.0)) * treble * 0.08;
+    let size_a = base_size * (1.0 + ja);
+    let size_b = base_size * (1.0 + jb);
+    let pa = project(vec3<f32>(
+      select(-size_a, size_a, (a_idx & 1) > 0),
+      select(-size_a, size_a, (a_idx & 2) > 0),
+      select(-size_a, size_a, (a_idx & 4) > 0)
+    ), t * rs + ja, t * rs * 0.7 + jb);
+    let pb = project(vec3<f32>(
+      select(-size_b, size_b, (b_idx & 1) > 0),
+      select(-size_b, size_b, (b_idx & 2) > 0),
+      select(-size_b, size_b, (b_idx & 4) > 0)
+    ), t * rs + jb, t * rs * 0.7 + ja);
+    min_d = min(min_d, dist_to_seg(pos, pa, pb));
+  }
+  return min_d;
+}
+
+fn d_sphere(pos: vec2<f32>, t: f32, energy: f32, bass: f32, treble: f32, centroid: f32, beat: f32, onset: f32) -> f32 {
+  let base_radius = 0.4 + energy * 0.35 + beat * 0.2;
+  var min_d = 1e5;
+  for (var i: i32 = 0; i < 56; i++) {
+    let f = f32(i) / 56.0;
+    let phi = 3.14159 * f;
+    let theta = f * 6.2831853 * 2.618;
+    let band = i32(f * 31.0);
+    let s = spec(band);
+    let r_jit = 1.0 + sin(f * 33.0 + t * (100.0 + treble * 120.0)) * treble * 0.12 + s * 0.3 + onset * 0.1;
+    let radius = base_radius * r_jit;
+    let pt = project(vec3<f32>(
+      radius * sin(phi) * cos(theta),
+      radius * cos(phi),
+      radius * sin(phi) * sin(theta)
+    ), t * (1.0 + centroid * 2.0) + s * 0.5, t * 0.3);
+    let psize = 0.01 + s * 0.03 + treble * 0.015 + bass * 0.008;
+    min_d = min(min_d, length(pos - pt) - psize);
+  }
+  return min_d;
+}
+
+fn d_heart(pos: vec2<f32>, t: f32, energy: f32, bass: f32, treble: f32, beat: f32, onset: f32) -> f32 {
+  let scale = 0.3 + energy * 0.35 + beat * 0.15;
+  let thickness = 0.1 + bass * 0.12;
+  let NUM = 70.0;
+  let LAYERS = 4.0;
+  var min_d = 1e5;
+  for (var layer: i32 = 0; layer < 4; layer++) {
+    let lf = f32(layer) / LAYERS;
+    let z_off = (lf - 0.5) * thickness * 2.0;
+    let layer_scale = 1.0 - abs(lf - 0.5) * 0.4;
+    var prev = vec2<f32>(0.0, 0.0);
+    for (var i: i32 = 0; i <= 70; i++) {
+      let f = f32(i) / NUM;
+      let a = f * 6.2831853;
+      let hx = 16.0 * pow(sin(a), 3.0);
+      let hy = 13.0 * cos(a) - 5.0 * cos(2.0 * a) - 2.0 * cos(3.0 * a) - cos(4.0 * a);
+      let band = i32(f * 31.0);
+      let s = spec(band);
+      let pulse = 1.0 + beat * 0.25 * sin(a * 3.0 + t * 12.0) + onset * 0.15 + s * 0.2;
+      let jit = sin(f * 41.0 + lf * 7.0 + t * (120.0 + treble * 140.0)) * treble * 0.05;
+      let p3 = vec3<f32>(
+        hx / 16.0 * scale * pulse * layer_scale + jit,
+        hy / 16.0 * scale * pulse * layer_scale + jit * 0.5,
+        z_off
+      );
+      let pt = project(p3, t * 0.7 + s * 0.3, t * 0.3);
+      if (i > 0) { min_d = min(min_d, dist_to_seg(pos, prev, pt)); }
+      prev = pt;
+    }
+  }
+  return min_d;
+}
+
+fn d_lissajous(pos: vec2<f32>, t: f32, energy: f32, bass: f32, treble: f32, centroid: f32, onset: f32) -> f32 {
+  let NUM = 180.0;
+  let fx = 2.0 + bass * 4.0 + centroid * 2.0;
+  let fy = 3.0 + treble * 5.0 + centroid * 1.5;
+  let phase = t * (0.5 + centroid * 0.8);
+  let amp = 0.45 + energy * 0.5 + onset * 0.1;
+  var min_d = 1e5;
+  var prev = vec2<f32>(0.0, 0.0);
+  for (var i: i32 = 0; i <= 180; i++) {
+    let f = f32(i) / NUM;
+    let a = f * 6.2831853;
+    let band = i32(f * 31.0);
+    let s = spec(band);
+    let jit_x = sin(f * 53.0 + t * (130.0 + treble * 150.0)) * treble * 0.06;
+    let jit_y = sin(f * 59.0 + 1.0 + t * (140.0 + treble * 160.0)) * treble * 0.06;
+    let x = sin(a * fx + phase) * amp * (0.7 + s * 0.6) + jit_x;
+    let y = sin(a * fy + phase * 1.3) * amp * 0.75 * (0.7 + s * 0.6) + jit_y;
+    let pt = vec2<f32>(x, y);
+    if (i > 0) { min_d = min(min_d, dist_to_seg(pos, prev, pt)); }
+    prev = pt;
+  }
+  return min_d;
+}
+
+fn material(input: MaterialInput) -> vec4<f32> {
+  let p = input.local_position;
+  let t = input.time_seconds;
+  let energy = view.extras[8][0];
+  let bass = view.extras[8][1];
+  let treble = view.extras[8][3];
+  let centroid = view.extras[9][0];
+  let onset = view.extras[9][1];
+  let beat = view.extras[9][2];
+  let mode = view.extras[9][3];
+
+  let uv = (p - 0.5) * 2.0;
+  let pos = vec2<f32>(uv.x, uv.y);
+
+  let d0 = d_waveform(pos, t, energy, bass, treble, centroid);
+  let d1 = d_cube(pos, t, energy, bass, treble, centroid, onset);
+  let d2 = d_sphere(pos, t, energy, bass, treble, centroid, beat, onset);
+  let d3 = d_heart(pos, t, energy, bass, treble, beat, onset);
+  let d4 = d_lissajous(pos, t, energy, bass, treble, centroid, onset);
+
+  let mi = floor(mode);
+  let blend = fract(mode);
+  var d = 0.0;
+  if (mi < 0.5) { d = mix(d0, d1, blend); }
+  else if (mi < 1.5) { d = mix(d1, d2, blend); }
+  else if (mi < 2.5) { d = mix(d2, d3, blend); }
+  else if (mi < 3.5) { d = mix(d3, d4, blend); }
+  else { d = mix(d4, d0, blend); }
+
+  if (d > 0.2) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+
+  // Unified neon green: bright core, subtle glow, energy-driven intensity
+  let neon_green = vec3<f32>(0.15, 1.0, 0.35);
+  let neon_cyan = vec3<f32>(0.0, 0.9, 1.0);
+  let base_col = mix(neon_green, neon_cyan, smoothstep(0.3, 0.8, centroid + treble * 0.3));
+  let intensity = 0.6 + energy * 0.8 + onset * 0.4;
+
+  // Fine line: sharp core + very narrow glow
+  let core = 4.0 * exp(-d * d * 1200.0);
+  let glow = 0.35 * exp(-d * d * 200.0);
+  var col = base_col * (core + glow) * intensity;
+  col += base_col * beat * 0.05 * exp(-length(pos) * 3.5);
+  col *= smoothstep(1.4, 0.15, length(pos));
+  col = col / (1.0 + col * 0.25);
+
+  let alpha = clamp(smoothstep(0.2, 0.008, d) * (0.7 + energy * 0.5), 0.0, 0.95);
+  if (alpha < 0.02) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  return vec4<f32>(col, alpha);
+}
+`;
+
 function packageFor(packageId: string, version: number, source: string): ShaderPackage {
   const sourceBytes = encoder.encode(source);
   return {
     package_id: packageId,
     version,
-    source_digest: shaderSourceDigest(sourceBytes),
+    source_digest: fnv1a64(sourceBytes),
     source_bytes: [...sourceBytes],
     entry_point: "material",
     fallback: "standard_ui",
@@ -411,5 +647,6 @@ export function pulseShaderPackages(): ShaderPackage[] {
     packageFor("pulse-neon-ring", 12, pulseNeonRing),
     packageFor("pulse-splash", 2, pulseSplashSource(SPLASH_REVEAL_SECONDS)),
     packageFor("pulse-scanline", 1, pulseScanline),
+    packageFor("pulse-audio-viz", 6, pulseAudioViz),
   ];
 }
