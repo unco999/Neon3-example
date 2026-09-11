@@ -84,6 +84,17 @@ npm run case:window -- shop
 
 ![音乐播放器演示](assets/music-player/音乐播放器.gif)
 
+> **第一步：放音乐**
+>
+> 将音乐文件放到项目根目录下的 `assets/music-player/` 文件夹中，例如：
+>
+> ```
+> D:\Neon3案例\assets\music-player\你的歌.mp3
+> D:\Neon3案例\assets\music-player\网易云歌曲.ncm
+> ```
+>
+> 如果该文件夹不存在，手动创建即可。启动后会自动扫描该目录下的所有音乐。
+
 **一键启动（Windows）：**
 
 ```powershell
@@ -105,7 +116,7 @@ $env:NEON3_PORT_OFFSET = "30"
 npm run case:window -- music-player
 ```
 
-**音乐文件：** 放入 `assets/music-player/` 目录，支持格式：
+**支持的音乐格式：**
 
 | 格式 | 说明 |
 |------|------|
