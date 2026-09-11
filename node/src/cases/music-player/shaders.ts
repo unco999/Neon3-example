@@ -348,9 +348,10 @@ fn material(input: MaterialInput) -> vec4<f32> {
   let rgb = bg_deep + color * total * 0.9 + white_hot * hot * 0.3;
 
   // === SCAN REVEAL: diagonal sweep from top-left to bottom-right ===
-  let scan_start_t = 0.0;
-  let scan_end_t = ${revealSeconds.toFixed(2)};
-  let scan_progress = clamp((t - scan_start_t) / (scan_end_t - scan_start_t), 0.0, 1.0);
+  // scan_progress is driven by the JS host via view.extras[9][3] (0..1),
+  // so the animation starts when the splash surface appears rather than
+  // when the runtime process started (input.time_seconds is global).
+  let scan_progress = clamp(view.extras[9][3], 0.0, 1.0);
 
   let scan_dir = vec2<f32>(0.7071, 0.7071);
   let pixel_proj = p.x * scan_dir.x + p.y * scan_dir.y;
@@ -371,7 +372,7 @@ fn material(input: MaterialInput) -> vec4<f32> {
 
   // Emit GPU->CPU event when the sweep has fully revealed the player.
   // FNV-1a 32-bit hash of "pulse.splash.complete" = 1196989152.
-  if (t >= scan_end_t) {
+  if (scan_progress >= 1.0) {
     emit_shader_event(1196989152u, vec4<f32>(t, 0.0, 0.0, 0.0));
   }
   let alpha = clamp(reveal, 0.0, 1.0);

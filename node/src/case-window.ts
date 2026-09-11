@@ -771,15 +771,38 @@ if (def.id === "music-player") {
     store.markApplied();
     console.log("[splash] app_view -> " + value);
   };
-  // Player visible from the start (flow default). The splash material runs a
-  // 6s diagonal scan-reveal driven by the runtime clock. When the sweep fully
-  // reveals the player, the shader emits `pulse.splash.complete`; we listen
-  // for that GPU event and tear down the splash layer — no hard-coded timeout.
+  // Drive the splash scan-reveal from JS via view.extras[9][3]. The shader's
+  // input.time_seconds is a global runtime clock (already ~2.5s by the time
+  // the flow mounts), so we feed a host-controlled 0..1 progress to make the
+  // animation start when the splash surface actually appears.
+  const splashWgpu = new NeonClient(endpoint(39103), {
+    origin: `neon3-case-${def.id}-splash`,
+    kind: "external_host",
+  });
+  const SPLASH_DURATION_MS = 1500;
+  const splashStartedAt = Date.now();
+  // Initialize extras so the first frame is fully covered (progress = 0).
+  const zeroExtras = Array.from({ length: 10 }, () => [0, 0, 0, 0]);
+  void splashWgpu.call("wgpu-runtime", "wgpu.ui.set_view_extras", { extras: zeroExtras }, { raiseForStatus: false });
+  const splashAnimTimer = setInterval(() => {
+    const elapsed = Date.now() - splashStartedAt;
+    const progress = Math.min(elapsed / SPLASH_DURATION_MS, 1.0);
+    const extras = Array.from({ length: 10 }, () => [0, 0, 0, 0]);
+    extras[9][3] = progress;
+    void splashWgpu.call("wgpu-runtime", "wgpu.ui.set_view_extras", { extras }, { raiseForStatus: false });
+    if (progress >= 1.0) {
+      clearInterval(splashAnimTimer);
+    }
+  }, 16);
+  // When the sweep fully reveals the player, the shader emits
+  // `pulse.splash.complete`; we listen for that GPU event and tear down the
+  // splash layer — no hard-coded timeout.
   let splashCompleteHandled = false;
   const splashSubscribedAt = Date.now();
   void onShaderEvent(app, "pulse.splash.complete", (payload) => {
     if (splashCompleteHandled) return;
     splashCompleteHandled = true;
+    clearInterval(splashAnimTimer);
     const elapsedMs = Date.now() - splashSubscribedAt;
     console.log("[splash] event fired after " + elapsedMs + "ms, shader t=" + (payload[0] ?? "?") + "s");
     store.value("show_splash").set(false);
