@@ -1,4 +1,12 @@
-﻿export function flow(): string {
+﻿export interface FlowTrack { key: string; title: string; artist: string; album: string; duration: number; cover: string; liked: boolean }
+export function flow(tracks?: FlowTrack[], activeKey?: string): string {
+  const plTracks = tracks ?? [
+    { key: "astral-crown", title: "The Last Light", artist: "Moonchild", album: "Neon Pulse", duration: 248, cover: "album-hero-green", liked: true },
+    { key: "violet-orbit", title: "Violet Orbit", artist: "Noctis Array", album: "Night Geometry", duration: 312, cover: "album-purple", liked: false },
+    { key: "golden-passage", title: "Golden Passage", artist: "Astra Forma", album: "Beyond the Gate", duration: 286, cover: "album-hero", liked: false },
+    { key: "monument-zero", title: "Monument Zero", artist: "North Frame", album: "Obsidian Rooms", duration: 195, cover: "album-architecture", liked: false },
+  ];
+  const defaultTrack = plTracks[0]?.key ?? "";
   // Helper: build a flow-DSL rich-text JSON span array with inner quotes
   // escaped as \" so the tokenizer keeps it inside the outer double quotes.
   const rich = (spans: Array<{ value: string; color: [number, number, number, number]; scale?: number }>) =>
@@ -27,6 +35,8 @@ resource icon-queue image
 resource icon-equalizer image
 resource icon-home image
 resource icon-settings image
+resource icon-music-play image
+${plTracks.map((t) => `resource track-cover-${t.key} image`).join("\n")}
 shader pulse-glass version 27 fallback standard_ui
 shader pulse-neon-edge version 24 fallback standard_ui
 shader pulse-neon-ring version 12 fallback standard_ui
@@ -46,7 +56,7 @@ skin pulse-volume slider
 surface surface.music-player-demo revision 3
 budget nodes=256 bindings=48 instances=256 text=192 glyphs=3072 events=128 clips=192
 input active_view enum:home|library|playlists|favorites default home
-input current_track enum:astral-crown|violet-orbit|golden-passage|monument-zero default astral-crown
+input current_track enum:${plTracks.map(t => t.key).join("|")} default ${defaultTrack}
 input is_playing bool default false
 input is_paused bool default true
 input position i32:0..600 default 108
@@ -62,6 +72,7 @@ input show_transition bool default false
 input player_visible bool default true
 input playlist_visible bool default false
 input page_transition bool default false
+${plTracks.map((t) => `input pl_active_${t.key.replace(/-/g, "_")} bool default false`).join("\n")}
 flow music-player-lab
 surface music-player-demo overlay w 360 h 720 fill #00000000
   panel flow-light-layer overlay x 0 y 0 w 360 h 720 fill #00000000 radius 0 composition_layer behind_glass
@@ -84,11 +95,11 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
     panel cover-frame overlay w 332 h 280 fill #00000000 line #00000000 border_width 0 radius 0 clip bounds
       geometry cut 20 20 20 20
       button play-violet-orbit x 0 y 0 w 1 h 1 skin pulse-primary value " " event player.track.play.violet-orbit
-      image now-art resource album-hero x 32 y 0 w 268 h 280 fit cover clip bounds radius 0 opacity 0.95
+      image now-art resource album-hero x 32 y 0 w 268 h 280 fit cover clip bounds radius 0 opacity 1.0
     panel track-row row w 332 h 44 align center
       panel track-copy column w 280 h 44 gap 0
-        text now-title value "The Last Light" h 24
-        text now-artist value "Moonchild" h 18
+        text now-title value "The Last Light" w 280 h 24
+        text now-artist value "Moonchild" w 280 h 18
       panel favorite-hit overlay w 36 h 36
         button favorite h 36 w 36 value " " fill #00000000 line #00000000 border_width 0 event player.track.like.astral-crown
         image heart-icon resource icon-heart x 8 y 8 w 20 h 20 fit contain
@@ -133,7 +144,7 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
       text pl-time value "9:41" w 48 h 16
       text pl-title value "NeonMusicPlayer" w 140 h 16
     panel pl-header row w 332 h 40 gap 8 align center
-      panel pl-search row w 260 h 32 fill #1a1a1a80 radius 16 pad 8
+      panel pl-search row w 260 h 32 fill #1a1a1a30 radius 16 pad 8
         text pl-search-text value "Search music..." w 200 h 16
       panel pl-settings-hit overlay w 32 h 32
         button pl-settings h 32 w 32 value " " fill #00000000 line #00000000 border_width 0 event playlist.settings
@@ -141,54 +152,21 @@ surface music-player-demo overlay w 360 h 720 fill #00000000
     panel pl-section-title row w 332 h 28 align center
       text pl-my-playlists value "My Playlists" w 200 h 24
     panel pl-list column w 332 h 440 gap 6
-      panel pl-item1 row w 332 h 64 fill #1a1a1a40 radius 8 align center gap 10
-        image pl-cover1 resource album-purple x 0 y 0 w 48 h 48 fit cover radius 6
-        panel pl-info1 column w 200 h 48 gap 2
-          text pl-name1 value "Astral Crown" w 200 h 20
-          text pl-count1 value "24 songs" w 200 h 14
-        panel pl-play1-hit overlay w 32 h 32 x 290 y 16
-          button pl-play1 h 32 w 32 value " " fill #00000000 line #00000000 border_width 0 event playlist.play.astral
-          image pl-play1-icon resource icon-play x 0 y 0 w 32 h 32 fit contain
-      panel pl-item2 row w 332 h 64 fill #1a1a1a40 radius 8 align center gap 10
-        image pl-cover2 resource album-gold x 0 y 0 w 48 h 48 fit cover radius 6
-        panel pl-info2 column w 200 h 48 gap 2
-          text pl-name2 value "Golden Passage" w 200 h 20
-          text pl-count2 value "18 songs" w 200 h 14
-        panel pl-play2-hit overlay w 32 h 32 x 290 y 16
-          button pl-play2 h 32 w 32 value " " fill #00000000 line #00000000 border_width 0 event playlist.play.golden
-          image pl-play2-icon resource icon-play x 0 y 0 w 32 h 32 fit contain
-      panel pl-item3 row w 332 h 64 fill #1a1a1a40 radius 8 align center gap 10
-        image pl-cover3 resource album-hero x 0 y 0 w 48 h 48 fit cover radius 6
-        panel pl-info3 column w 200 h 48 gap 2
-          text pl-name3 value "Violet Orbit" w 200 h 20
-          text pl-count3 value "32 songs" w 200 h 14
-        panel pl-play3-hit overlay w 32 h 32 x 290 y 16
-          button pl-play3 h 32 w 32 value " " fill #00000000 line #00000000 border_width 0 event playlist.play.violet
-          image pl-play3-icon resource icon-play x 0 y 0 w 32 h 32 fit contain
-      panel pl-item4 row w 332 h 64 fill #1a1a1a40 radius 8 align center gap 10
-        image pl-cover4 resource album-hero-green x 0 y 0 w 48 h 48 fit cover radius 6
-        panel pl-info4 column w 200 h 48 gap 2
-          text pl-name4 value "Emerald Dreams" w 200 h 20
-          text pl-count4 value "15 songs" w 200 h 14
-        panel pl-play4-hit overlay w 32 h 32 x 290 y 16
-          button pl-play4 h 32 w 32 value " " fill #00000000 line #00000000 border_width 0 event playlist.play.emerald
-          image pl-play4-icon resource icon-play x 0 y 0 w 32 h 32 fit contain
-      panel pl-item5 row w 332 h 64 fill #1a1a1a40 radius 8 align center gap 10
-        image pl-cover5 resource album-architecture x 0 y 0 w 48 h 48 fit cover radius 6
-        panel pl-info5 column w 200 h 48 gap 2
-          text pl-name5 value "Monument Zero" w 200 h 20
-          text pl-count5 value "21 songs" w 200 h 14
-        panel pl-play5-hit overlay w 32 h 32 x 290 y 16
-          button pl-play5 h 32 w 32 value " " fill #00000000 line #00000000 border_width 0 event playlist.play.monument
-          image pl-play5-icon resource icon-play x 0 y 0 w 32 h 32 fit contain
-      panel pl-item6 row w 332 h 64 fill #1a1a1a40 radius 8 align center gap 10
-        image pl-cover6 resource album-purple x 0 y 0 w 48 h 48 fit cover radius 6
-        panel pl-info6 column w 200 h 48 gap 2
-          text pl-name6 value "Neon Nights" w 200 h 20
-          text pl-count6 value "28 songs" w 200 h 14
-        panel pl-play6-hit overlay w 32 h 32 x 290 y 16
-          button pl-play6 h 32 w 32 value " " fill #00000000 line #00000000 border_width 0 event playlist.play.neon
-          image pl-play6-icon resource icon-play x 0 y 0 w 32 h 32 fit contain
+${plTracks.map((t, i) => {
+  const activeVar = `pl_active_${t.key.replace(/-/g, "_")}`;
+  return `      panel pl-item${i+1} row w 332 h 64 fill #0d0d0d30 radius 0 align center gap 12
+        geometry cut 6 6 6 6
+        panel pl-lpad${i+1} w 12 h 1 fill #00000000
+        image pl-cover${i+1} resource ${t.cover} x 0 y 0 w 48 h 48 fit cover radius 0
+        panel pl-info${i+1} column w 190 h 48 gap 3
+          text pl-name${i+1} value "${t.title.replace(/"/g, '\\"')}" w 190 h 22
+          text pl-count${i+1} value "${t.artist.replace(/"/g, '\\"')}" w 190 h 16
+        panel pl-bar${i+1} overlay x 0 y 0 w 3 h 64 fill #A3FF12 visible $${activeVar}
+        panel pl-glow${i+1} overlay x 10 y 6 w 52 h 52 fill #A3FF12 radius 0 opacity 0.15 visible $${activeVar}
+        image pl-nowicon${i+1} resource icon-music-play x 292 y 18 w 28 h 28 fit contain visible $${activeVar}
+        panel pl-item${i+1}-hit overlay x 0 y 1 w 332 h 63
+          button pl-item${i+1}-btn h 63 w 332 value " " fill #00000000 line #00000000 border_width 0 event player.track.play.${t.key}`;
+}).join("\n")}
     panel pl-spacer grow 1 fill #00000000
     panel pl-home-row row w 332 h 56 align center justify center
       panel pl-home-hit overlay w 48 h 48

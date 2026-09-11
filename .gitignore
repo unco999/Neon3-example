@@ -36,3 +36,21 @@ Adobe After Effects */
 assets/ui_elements/
 assets/music-player/icon-waveform.png
 run-pulse-flow.bat
+
+# Music player audio files (large / copyright — place your own in assets/music-player/)
+assets/music-player/*.mp3
+assets/music-player/*.ncm
+assets/music-player/*.flac
+assets/music-player/*.m4a
+assets/music-player/*.ogg
+assets/music-player/*.wav
+assets/music-player/icon-music-play-green.png
+
+# Cloned reference repos (not part of this project)
+DSO1-Oscilloscope/
+ncmdump-net/
+
+# Temp / scratch scripts
+node/_extend_audio.py
+node/_*.py
+node/_*.js

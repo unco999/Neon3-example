@@ -39,10 +39,10 @@ fn material(input: MaterialInput) -> vec4<f32> {
   let left_fade = 1.0 - smoothstep(0.38, 0.62, p.x);
   let bottom_fade = smoothstep(0.38, 0.62, p.y);
   let transparent_mask = left_fade * bottom_fade;
-  let glass_alpha = 0.55 * (1.0 - transparent_mask);
+  let glass_alpha = 0.28 * (1.0 - transparent_mask);
 
-  // Keep the player shell dark; the native acrylic backdrop owns blur and tint.
-  return vec4<f32>(0.001, 0.002, 0.0015, glass_alpha);
+  // Light frosted glass — native acrylic backdrop owns blur and tint.
+  return vec4<f32>(0.02, 0.03, 0.025, glass_alpha);
 }
 `;
 
@@ -617,8 +617,7 @@ fn material(input: MaterialInput) -> vec4<f32> {
   let glow = 0.9 * exp(-d * d * (260.0 / width_scale));
   // Layer 3 — wide halo (2nd blur pass)
   let halo = 0.38 * exp(-d * d * (48.0 / width_scale));
-  // Layer 4 — halation (very wide diffusion, "black mist")
-  let halation = 0.14 * exp(-d * d * (11.0 / width_scale));
+  // (halation "black mist" removed — keeps background transparent)
 
   // Phosphor color grading: hot white core → green beam → cyan glow → teal halation
   let phosphor_green = vec3<f32>(0.10, 1.0, 0.36);
@@ -636,14 +635,13 @@ fn material(input: MaterialInput) -> vec4<f32> {
   let intensity = 0.65 + energy * 0.95 + onset * 0.45;
   var col = core_col * core * intensity
           + glow_col * glow * intensity
-          + halo_col * halo
-          + phosphor_teal * halation;
+          + halo_col * halo;
 
   // Beat flash — burst of brightness concentrated near the beam (DSO-1 Beat Flash).
   col += vec3<f32>(0.85, 1.0, 0.55) * beat * 0.30 * exp(-d * d * 90.0);
 
-  // CRT vignette — darker toward the glass edges.
-  col *= smoothstep(1.5, 0.18, length(pos));
+  // Subtle vignette — lighter edges for more transparent feel
+  col *= smoothstep(1.5, 0.35, length(pos));
 
   // Soft phosphor tone-mapping (compressive roll-off, like real CRT).
   col = col / (1.0 + col * 0.22);

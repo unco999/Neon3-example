@@ -78,6 +78,51 @@ npm run case:window -- shop
 窗口入口默认使用 `v0.2.3`；如本机已准备其他版本，可先设置
 `$env:NEON3_RUNTIME_VERSION = "v0.2.5"` 再启动。
 
+### Pulse Acrylic 音乐播放器
+
+全屏亚克力毛玻璃音乐播放器，支持网易云 NCM 解密、封面提取、实时音频可视化和播放列表。
+
+**一键启动（Windows）：**
+
+```powershell
+cd node
+.\run-pulse-acrylic.bat
+```
+
+**或手动设置环境变量后启动：**
+
+```powershell
+cd node
+$env:NEON3_RUNTIME_VERSION = "v0.2.6"
+$env:NEON_ROOT = "D:\Neon3"
+$env:NEON_WINDOW_BACKDROP = "acrylic"
+$env:NEON_WINDOW_CHROME = "borderless"
+$env:NEON_BLUR_AMOUNT = "16"
+$env:NEON_CONTINUOUS_RENDER = "1"
+$env:NEON3_PORT_OFFSET = "30"
+npm run case:window -- music-player
+```
+
+**音乐文件：** 放入 `assets/music-player/` 目录，支持格式：
+
+| 格式 | 说明 |
+|------|------|
+| `.mp3` | ID3v2 标签（标题/艺术家/专辑/封面） |
+| `.ncm` | 网易云加密格式，自动解密 + 提取封面 |
+| `.flac` | Vorbis Comment + METADATA_BLOCK_PICTURE |
+| `.wav` | 原生 PCM |
+| `.m4a` / `.ogg` | ffmpeg 解码 |
+
+首次播放会自动预解码所有歌曲并缓存，后续切歌秒切。日志输出到
+`node/pulse-acrylic-*.out.log` 和 `*.err.log`。
+
+**功能：**
+- 启动画面扫光 shader 动画
+- 全屏滚动波形背景（频谱驱动振幅/速度/粗细）
+- 播放列表（斜切角、正在播放项霓虹绿高亮）
+- 进度条、上一首/播放暂停/下一首、音量
+- 实时 FFT 频谱分析（32 频段 + 能量/低频/中频/高频/质心/节拍检测）
+
 ### 本批案例
 
 ```powershell

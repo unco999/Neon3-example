@@ -10,7 +10,9 @@ import type { InventoryState } from "./cases/inventory/domain.js";
 import * as shopDomain from "./cases/shop/domain.js";
 import type { ShopState } from "./cases/shop/domain.js";
 import { pulseShaderPackages } from "./cases/music-player/shaders.js";
-import { AudioPlayer } from "./cases/music-player/audio-engine.js";
+import { flow as musicPlayerFlow, type FlowTrack } from "./cases/music-player/flow.js";
+import { scanMusicDir, uploadCoverImage, type ScannedTrack } from "./cases/music-player/music-scanner.js";
+import { AudioPlayer, type DecodedAudio, type TrackMeta } from "./cases/music-player/audio-engine.js";
 
 /**
  * FNV-1a 32-bit hash - matches the constant used in WGSL shader event IDs.
@@ -304,7 +306,18 @@ function visualFlow(source: string, id: string, value: any) {
     const track = value.tracks?.find((item: any) => item.key === value.current_track) ?? value.tracks?.[0];
     const cover = track?.cover ?? "album-hero";
     const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-    return source
+    let result = source
+      .replace(/(input position i32:0\.\.)\d+( default )\d+/, `$1${Math.max(1, Math.floor(track?.duration ?? value.duration ?? 600))}$2${Math.floor(value.position ?? 0)}`)
+      .replace(/(input duration i32:1\.\.)\d+( default )\d+/, `$1${Math.max(1, Math.floor(track?.duration ?? value.duration ?? 600))}$2${Math.max(1, Math.floor(track?.duration ?? value.duration ?? 600))}`)
+      .replace(/(input is_playing bool default )\w+/, `$1${value.is_playing ? "true" : "false"}`)
+      .replace(/(input is_paused bool default )\w+/, `$1${value.is_paused ? "true" : "false"}`)
+      .replace(/(input current_track enum:[^ ]+ default )\S+/, `$1${value.current_track ?? "track-0"}`)
+      .replace(/(input enabled bool default )\w+/, `$1${value.enabled ? "true" : "true"}`);
+    for (const t of (value.tracks ?? [])) {
+      const safeKey = t.key.replace(/-/g, "_");
+      result = result.replace(new RegExp(`(input pl_active_${safeKey} bool default )\\w+`), `$1${t.key === value.current_track ? "true" : "false"}`);
+    }
+    return result
       .replace(/(image now-art resource )[^\s]+/, `$1${cover}`)
       .replace(/(image mini-art resource )[^\s]+/, `$1${cover}`)
       .replace(/(text now-title value )"[^"]*"/, `$1"${track?.title ?? ""}"`)
@@ -568,15 +581,201 @@ if (def.id === "music-player") {
   const shaderState = await wgpuShaderClient.call("wgpu-runtime", "wgpu.shader.state", {}, { raiseForStatus: false });
   console.log("[shader-state]", JSON.stringify(shaderState));
 
+  // === Scan music directory and build dynamic playlist ===
+  const musicDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "assets", "music-player");
+  const scanned: ScannedTrack[] = await scanMusicDir(musicDir);
+  console.log(`[playlist] scanned ${scanned.length} track(s) from ${musicDir}`);
+  const flowTracks: FlowTrack[] = scanned.map((t) => ({
+    key: t.key, title: t.title, artist: t.artist, album: t.album,
+    duration: t.duration, cover: t.cover, liked: t.liked,
+  }));
+  // Mutate domain state with real tracks
+  (state as any).tracks = flowTracks;
+  (state as any).current_track = flowTracks[0]?.key ?? "";
+  store.value("current_track").set(flowTracks[0]?.key ?? "");
+  // Override flow to use dynamic playlist
+  (def as any).flow = () => musicPlayerFlow(flowTracks);
+
   // === Audio Engine ===
   const audioPlayer = new AudioPlayer();
-  const testAudioPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "assets", "music-player", "snowflake.mp3");
-  try {
-    await audioPlayer.loadFile(testAudioPath);
-    console.log(`[audio] loaded snowflake, duration=${audioPlayer.duration.toFixed(1)}s`);
-  } catch (err) {
-    console.warn("[audio] failed to load test track:", err);
+
+  // === Track load caching + race protection ===
+  let loadToken = 0;
+  const audioCache = new Map<string, { audio: DecodedAudio; meta: TrackMeta }>();
+  const coverUploaded = new Set<string>();
+
+  // mountFlow resets ALL flow inputs to their DSL defaults. This helper
+  // re-publishes every current store value after mount so state (show_splash,
+  // is_playing, current_track, active_view, …) survives re-mounts.
+  const PERSISTED_INPUTS = [
+    "active_view", "current_track", "is_playing", "is_paused", "position",
+    "duration", "volume", "shuffle", "repeat", "enabled", "_anim_tick",
+    "app_view", "show_splash", "show_transition", "player_visible",
+    "playlist_visible", "page_transition",
+    ...flowTracks.map((t) => `pl_active_${t.key.replace(/-/g, "_")}`),
+  ];
+  const mountFlowSafe = async (extra?: Record<string, unknown>) => {
+    if (extra) Object.assign(state, extra);
+    await app.ui.mountFlow(visualFlow(def.flow(), def.id, state), { validate: false });
+    for (const k of PERSISTED_INPUTS) {
+      try {
+        const s = store.value(k) as any;
+        if (s.current !== null) {
+          // ScalarStore.set() no-ops when the wire value is unchanged, so a
+          // plain get→set leaves dirty=false. The freshly-mounted flow has its
+          // inputs reset to DSL defaults; force dirty so every persisted value
+          // is re-published and survives the re-mount.
+          s.dirty = true;
+          (store as any).dirtyScalars.add(k);
+        }
+      } catch { /* input not declared in this flow variant */ }
+    }
+    const changes = declaredInputChanges(def.flow(), store.changedScalars());
+    if (changes.length > 0) await app.ui.publish(changes);
+    store.markApplied();
+  };
+
+  // Load a track by key: decode file, extract metadata + cover, upload cover, update UI
+  let isLoading = false;
+  const loadAndPlayTrack = async (key: string, autoplay: boolean = true) => {
+    const track = scanned.find((t) => t.key === key);
+    if (!track) { console.warn(`[audio] track not found: ${key}`); return; }
+    // Skip if this track is already loaded and playing (prevents double-load from double-fired events)
+    if (audioPlayer.isPlaying && (state as any).current_track === key) {
+      console.log(`[audio] skip reload of current track: ${key}`);
+      return;
+    }
+    if (isLoading) { console.log(`[audio] skip ${key}: another load in progress`); return; }
+    isLoading = true;
+    const t0 = Date.now();
+    const myToken = ++loadToken;
+    const isStale = () => loadToken !== myToken;
+    try {
+      const ft = flowTracks.find((t) => t.key === key);
+      let needRemount = false;
+
+      // Decode (cached: only first load hits ffmpeg, restores PCM instantly)
+      const cached = audioCache.get(key);
+      console.log(`[audio] load ${key} cached=${!!cached} playing=${audioPlayer.isPlaying} current=${(state as any).current_track}`);
+      if (cached) {
+        audioPlayer.loadFromCache(cached.audio, cached.meta);
+      } else {
+        await audioPlayer.loadFile(track.path);
+        if (isStale()) return;
+        if (audioPlayer.decodedAudio && audioPlayer.trackMeta) {
+          audioCache.set(key, { audio: audioPlayer.decodedAudio, meta: audioPlayer.trackMeta });
+        }
+      }
+      const meta = audioPlayer.trackMeta;
+      const tDecode = Date.now() - t0;
+      console.log(`[audio] decoded ${key} in ${tDecode}ms`);
+
+      // Start playback IMMEDIATELY after decode, before any UI RPCs.
+      // If speaker is already running this is a no-op (swapAudio already cut over);
+      // if speaker was stopped this creates a new one right away.
+      if (autoplay) {
+        audioPlayer.play();
+        console.log(`[audio] play() called at ${Date.now() - t0}ms, playing=${audioPlayer.isPlaying}`);
+      }
+
+      if (ft && meta) {
+        ft.title = meta.title;
+        ft.artist = meta.artist;
+        ft.album = meta.album;
+        ft.duration = Math.round(audioPlayer.duration);
+        // Upload embedded cover (once per track) — async, doesn't block audio
+        if (meta.cover && meta.cover.length > 0 && !coverUploaded.has(key)) {
+          const coverId = `track-cover-${key}`;
+          console.log(`[cover] uploading ${coverId} (${meta.cover.length} bytes)...`);
+          const ok = await uploadCoverImage(app.client, coverId, meta.cover);
+          if (isStale()) return;
+          if (ok) {
+            ft.cover = coverId;
+            coverUploaded.add(key);
+            needRemount = true;
+            console.log(`[cover] uploaded ${coverId} OK`);
+          } else {
+            console.warn(`[cover] upload FAILED for ${coverId}`);
+          }
+        }
+      }
+
+      (state as any).current_track = key;
+      (state as any).duration = Math.round(audioPlayer.duration);
+      (state as any).position = 0;
+      store.value("current_track").set(key);
+      store.value("position").set(0);
+      store.value("is_playing").set(true);
+      store.value("is_paused").set(false);
+      // Highlight now-playing row via dynamic inputs (sanitized: hyphens→underscores)
+      for (const t of flowTracks) {
+        store.value(`pl_active_${t.key.replace(/-/g, "_")}`).set(t.key === key);
+      }
+
+      if (needRemount) {
+        // Full re-mount only when a new cover image was just uploaded
+        await mountFlowSafe();
+        if (isStale()) return;
+      } else {
+        // Fast path: publish changed inputs only (no re-mount) — cached tracks
+        const changes = declaredInputChanges(def.flow(), store.changedScalars());
+        if (changes.length > 0) await app.ui.publish(changes);
+      }
+      store.markApplied();
+      if (isStale()) return;
+
+      // Publish is_playing state (audio already started earlier)
+      const ac = declaredInputChanges(def.flow(), store.changedScalars());
+      if (ac.length > 0) { void app.ui.publish(ac).catch(() => undefined); store.markApplied(); }
+      console.log(`[audio] loadAndPlayTrack ${key} done in ${Date.now() - t0}ms (decode=${tDecode}ms)`);
+    } catch (err) {
+      if (!isStale()) console.warn(`[audio] failed to load ${track.filename}:`, err);
+    } finally {
+      isLoading = false;
+    }
+  };
+
+  // Load first track (no autoplay yet — splash sequence handles that)
+  if (scanned.length > 0) {
+    await loadAndPlayTrack(scanned[0].key, false);
   }
+
+  // Background pre-decode: decode PCM + upload cover for every remaining track
+  // so track switches are cache hits (no spawnSync ffmpeg blocking).
+  const preDecodePlayer = new AudioPlayer();
+  let preDecodeDone = false;
+  const preDecodeAll = async () => {
+    for (const t of scanned) {
+      if (audioCache.has(t.key) && coverUploaded.has(t.key)) continue;
+      try {
+        if (!audioCache.has(t.key)) {
+          const t0 = Date.now();
+          await preDecodePlayer.loadFile(t.path);
+          if (preDecodePlayer.decodedAudio && preDecodePlayer.trackMeta) {
+            audioCache.set(t.key, { audio: preDecodePlayer.decodedAudio, meta: preDecodePlayer.trackMeta });
+            console.log(`[predecode] cached ${t.key} in ${Date.now()-t0}ms: ${preDecodePlayer.trackMeta.title}`);
+          }
+        }
+        const meta = preDecodePlayer.trackMeta;
+        if (meta?.cover && meta.cover.length > 0 && !coverUploaded.has(t.key)) {
+          const coverId = `track-cover-${t.key}`;
+          const ok = await uploadCoverImage(app.client, coverId, meta.cover);
+          if (ok) {
+            coverUploaded.add(t.key);
+            const ft = flowTracks.find((x) => x.key === t.key);
+            if (ft) ft.cover = coverId;
+            console.log(`[predecode] cover uploaded ${coverId}`);
+          }
+        }
+      } catch (e) {
+        console.warn(`[predecode] failed ${t.key}:`, e);
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    preDecodeDone = true;
+    console.log("[predecode] all tracks cached");
+  };
+  void preDecodeAll();
 
   // Dedicated wgpu client for audio frame uploads
   const audioWgpuClient = new NeonClient(endpoint(39103), {
@@ -584,10 +783,23 @@ if (def.id === "music-player") {
     kind: "external_host",
   });
 
+  // Register track play handlers for every scanned file
+  for (const t of scanned) {
+    app.router.on(`player.track.play.${t.key}`, () => {
+      void loadAndPlayTrack(t.key, true);
+      // Auto-close playlist after selecting a track
+      const plVisible = (store.value("playlist_visible") as any)?.current?.value ?? false;
+      if (plVisible) void transitionTo(false);
+    });
+  }
+
   // Page transition progress (-1 = no transition, 0..1 = active)
   let transitionProgress = -1;
 
   // Upload audio frame to runtime ~60fps
+  let lastSecond = -1;
+  // Pre-allocated extras buffer — reused every 16ms to avoid GC pauses
+  const _extras: number[][] = Array.from({ length: 10 }, () => [0, 0, 0, 0]);
   const audioUploadTimer = setInterval(async () => {
     if (!audioPlayer.isPlaying) return;
     const frame = audioPlayer.frame;
@@ -595,21 +807,40 @@ if (def.id === "music-player") {
       // Pack audio data into the generic 10 x vec4 extras slot:
       //   extras[0..7] = spectrum[0..31]
       //   extras[8]    = [energy, bass, mid, treble]
-      //   extras[9]    = [centroid, onset, 0, 0]
-      const extras: number[][] = [];
+      //   extras[9]    = [centroid, onset, beat, mode]
       for (let i = 0; i < 8; i++) {
-        extras.push([frame.spectrum[i * 4], frame.spectrum[i * 4 + 1], frame.spectrum[i * 4 + 2], frame.spectrum[i * 4 + 3]]);
+        _extras[i][0] = frame.spectrum[i * 4];
+        _extras[i][1] = frame.spectrum[i * 4 + 1];
+        _extras[i][2] = frame.spectrum[i * 4 + 2];
+        _extras[i][3] = frame.spectrum[i * 4 + 3];
       }
       const midVal = transitionProgress >= 0 ? transitionProgress : frame.mid;
-      extras.push([frame.energy, frame.bass, midVal, frame.treble]);
-      extras.push([frame.centroid, frame.onset, frame.beat, frame.mode]);
+      _extras[8][0] = frame.energy;
+      _extras[8][1] = frame.bass;
+      _extras[8][2] = midVal;
+      _extras[8][3] = frame.treble;
+      _extras[9][0] = frame.centroid;
+      _extras[9][1] = frame.onset;
+      _extras[9][2] = frame.beat;
+      _extras[9][3] = frame.mode;
       await audioWgpuClient.call("wgpu-runtime", "wgpu.ui.set_view_extras", {
-        extras,
+        extras: _extras,
       }, { raiseForStatus: false });
     } catch { /* ignore transient upload errors */ }
     // Update playback position
-    store.value("position").set(Math.floor(audioPlayer.position));
+    const sec = Math.floor(audioPlayer.position);
+    store.value("position").set(sec);
     store.value("duration").set(Math.floor(audioPlayer.duration));
+    // Re-mount flow when second changes to refresh literal elapsed text.
+    // Skip while playlist is open to avoid player-shell flashing over it.
+    if (sec !== lastSecond) {
+      lastSecond = sec;
+      (state as any).position = sec;
+      const plVisible = (store.value("playlist_visible") as any).current?.value ?? false;
+      if (!plVisible) {
+        void mountFlowSafe().catch(() => undefined);
+      }
+    }
     const posChanges = declaredInputChanges(def.flow(), store.changedScalars());
     if (posChanges.length > 0) {
       void app.ui.publish(posChanges).catch(() => undefined);
@@ -638,16 +869,15 @@ if (def.id === "music-player") {
   });
 
   app.router.on("player.transport.next", () => {
-    audioPlayer.stop();
-    audioPlayer.play();
-    publishAudioState();
-    console.log("[audio] next track");
+    const idx = scanned.findIndex((t) => t.key === (state as any).current_track);
+    const next = scanned[(idx + 1 + scanned.length) % scanned.length];
+    if (next) { void loadAndPlayTrack(next.key, true); console.log(`[audio] next -> ${next.filename}`); }
   });
 
   app.router.on("player.transport.previous", () => {
-    audioPlayer.seek(0);
-    publishAudioState();
-    console.log("[audio] previous track");
+    const idx = scanned.findIndex((t) => t.key === (state as any).current_track);
+    const prev = scanned[(idx - 1 + scanned.length) % scanned.length];
+    if (prev) { void loadAndPlayTrack(prev.key, true); console.log(`[audio] prev -> ${prev.filename}`); }
   });
 
   app.router.on("player.transport.seek", (event: any) => {
@@ -660,8 +890,13 @@ if (def.id === "music-player") {
   const publishPageState = async () => {
     const changes = declaredInputChanges(def.flow(), store.changedScalars());
     if (changes.length > 0) {
-      await app.ui.publish(changes);
-      store.markApplied();
+      try {
+        await app.ui.publish(changes);
+        store.markApplied();
+      } catch (e) {
+        // StaleRevisionError is transient — another publish won the race; next tick catches up
+        if ((e as any)?.code !== "stale_revision") console.warn("[page] publish failed:", e);
+      }
     }
   };
 
@@ -672,7 +907,7 @@ if (def.id === "music-player") {
     store.value("page_transition").set(true);
     void publishPageState();
 
-    const duration = 1000; // 1 second total
+    const duration = 1000; // 1 second total transition
     const startTime = Date.now();
     let pageSwapped = false;
 
@@ -730,17 +965,19 @@ if (def.id === "music-player") {
   process.once("SIGTERM", stopAudioOnExit);
   process.once("exit", stopAudioOnExit);
 
-  // Auto-play for testing
+  // Auto-play after splash
   setTimeout(() => {
-    audioPlayer.play();
-    store.value("is_playing").set(true);
-    store.value("is_paused").set(false);
-    const changes = declaredInputChanges(def.flow(), store.changedScalars());
-    if (changes.length > 0) {
-      void app.ui.publish(changes).catch(() => undefined);
-      store.markApplied();
+    if (scanned.length > 0) {
+      audioPlayer.play();
+      store.value("is_playing").set(true);
+      store.value("is_paused").set(false);
+      const changes = declaredInputChanges(def.flow(), store.changedScalars());
+      if (changes.length > 0) {
+        void app.ui.publish(changes).catch(() => undefined);
+        store.markApplied();
+      }
+      console.log("[audio] auto-play started");
     }
-    console.log("[audio] auto-play started");
   }, 2000);
 }
 
