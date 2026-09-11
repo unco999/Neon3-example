@@ -413,7 +413,7 @@ fn material(input: MaterialInput) -> vec4<f32> {
 
 
 // ============================================================================
-// pulse-audio-viz v6 — Unified neon green, aggressive audio reactivity
+// pulse-audio-viz v7 — DSO-1 inspired 4-layer phosphor glow, CRT scanlines, beat flash
 //
 // 5 modes: waveform, cube, sphere, heart, lissajous.
 // All modes heavily driven by spectrum: jitter, pulse, rotation, deformation.
@@ -605,24 +605,233 @@ fn material(input: MaterialInput) -> vec4<f32> {
   else if (mi < 3.5) { d = mix(d3, d4, blend); }
   else { d = mix(d4, d0, blend); }
 
-  if (d > 0.2) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  if (d > 0.35) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
 
-  // Unified neon green: bright core, subtle glow, energy-driven intensity
-  let neon_green = vec3<f32>(0.15, 1.0, 0.35);
-  let neon_cyan = vec3<f32>(0.0, 0.9, 1.0);
-  let base_col = mix(neon_green, neon_cyan, smoothstep(0.3, 0.8, centroid + treble * 0.3));
-  let intensity = 0.6 + energy * 0.8 + onset * 0.4;
+  // === DSO-1 inspired 4-layer phosphor glow stack ===
+  // Beam width expands with RMS energy and on beat (Reactive effect).
+  let width_scale = 1.0 + energy * 0.7 + beat * 0.35;
 
-  // Fine line: sharp core + very narrow glow
-  let core = 4.0 * exp(-d * d * 1200.0);
-  let glow = 0.35 * exp(-d * d * 200.0);
-  var col = base_col * (core + glow) * intensity;
-  col += base_col * beat * 0.05 * exp(-length(pos) * 3.5);
-  col *= smoothstep(1.4, 0.15, length(pos));
-  col = col / (1.0 + col * 0.25);
+  // Layer 1 — sharp core (the beam itself)
+  let core = 5.5 * exp(-d * d * (1500.0 / width_scale));
+  // Layer 2 — medium glow (1st Gaussian blur pass)
+  let glow = 0.9 * exp(-d * d * (260.0 / width_scale));
+  // Layer 3 — wide halo (2nd blur pass)
+  let halo = 0.38 * exp(-d * d * (48.0 / width_scale));
+  // Layer 4 — halation (very wide diffusion, "black mist")
+  let halation = 0.14 * exp(-d * d * (11.0 / width_scale));
 
-  let alpha = clamp(smoothstep(0.2, 0.008, d) * (0.7 + energy * 0.5), 0.0, 0.95);
-  if (alpha < 0.02) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  // Phosphor color grading: hot white core → green beam → cyan glow → teal halation
+  let phosphor_green = vec3<f32>(0.10, 1.0, 0.36);
+  let phosphor_cyan  = vec3<f32>(0.0, 0.82, 1.0);
+  let phosphor_teal  = vec3<f32>(0.0, 0.45, 0.65);
+  let phosphor_hot   = vec3<f32>(0.92, 1.0, 0.72);
+
+  // Spectral centroid drives hue shift between green and cyan (approximates
+  // DSO-1's afterglow hue-rotation without needing frame history).
+  let hue = smoothstep(0.15, 0.85, centroid + treble * 0.25);
+  let core_col = mix(phosphor_green, phosphor_hot, smoothstep(0.45, 1.0, energy + beat * 0.4));
+  let glow_col = mix(phosphor_green, phosphor_cyan, hue);
+  let halo_col = mix(phosphor_cyan, phosphor_teal, 0.55);
+
+  let intensity = 0.65 + energy * 0.95 + onset * 0.45;
+  var col = core_col * core * intensity
+          + glow_col * glow * intensity
+          + halo_col * halo
+          + phosphor_teal * halation;
+
+  // Beat flash — burst of brightness concentrated near the beam (DSO-1 Beat Flash).
+  col += vec3<f32>(0.85, 1.0, 0.55) * beat * 0.30 * exp(-d * d * 90.0);
+
+  // CRT vignette — darker toward the glass edges.
+  col *= smoothstep(1.5, 0.18, length(pos));
+
+  // Soft phosphor tone-mapping (compressive roll-off, like real CRT).
+  col = col / (1.0 + col * 0.22);
+
+  // CRT scanlines — subtle horizontal darkening only where the beam is bright.
+  let scanline = 1.0 - 0.045 * (0.5 + 0.5 * sin(p.y * 780.0));
+  col *= scanline;
+
+  let alpha = clamp(smoothstep(0.35, 0.01, d) * (0.55 + energy * 0.6), 0.0, 0.97);
+  if (alpha < 0.01) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  return vec4<f32>(col, alpha);
+}
+`;
+
+
+// pulse-audio-bg v2 — Full-screen scrolling oscilloscope background
+//
+// 4 horizontal waveform bands with extreme music reactivity:
+//   - scroll speed driven by energy + per-band spectrum energy + centroid
+//   - line thickness driven by per-band energy + beat + onset
+//   - vertical shake on onset/beat, high-freq jitter on treble
+//   - amplitude driven by per-band spectrum
+// Fully transparent background — only glowing waveforms, no dark fill.
+//
+// View extras: extras[0..7]=spectrum[0..31], extras[8]=(energy,bass,mid,treble),
+//              extras[9]=(centroid,onset,beat,mode)
+const pulseAudioBg = `
+fn spec(i: i32) -> f32 {
+  let idx = clamp(i, 0, 31);
+  return view.extras[idx / 4][idx % 4];
+}
+
+fn dist_to_seg(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+  let dir = b - a;
+  let len2 = dot(dir, dir);
+  if (len2 < 1e-6) { return length(p - a); }
+  let proj = clamp(dot(p - a, dir) / len2, 0.0, 1.0);
+  return length(p - (a + dir * proj));
+}
+
+// Average energy over a spectrum range
+fn band_energy(spec_start: i32, spec_end: i32) -> f32 {
+  var sum = 0.0;
+  for (var i: i32 = spec_start; i < spec_end; i++) {
+    sum += spec(i);
+  }
+  return sum / f32(spec_end - spec_start);
+}
+
+// One horizontal scrolling waveform band with full music reactivity.
+// cy: base Y, speed: scroll speed, amp: base amplitude
+// shake: onset/beat-driven vertical offset, jitter: treble high-freq noise
+// harmonic_mix: 0..1 controls waveform character per band
+fn band(pos: vec2<f32>, cy: f32, speed: f32, amp: f32, t: f32,
+        spec_start: i32, spec_end: i32, shake: f32, jitter: f32,
+        harmonic_mix: f32) -> f32 {
+  let NUM = 72.0;
+  let span = f32(spec_end - spec_start);
+  let cy_s = cy + shake;
+  var min_d = 1e5;
+  var prev = vec2<f32>(-1.4, cy_s);
+  for (var i: i32 = 0; i <= 72; i++) {
+    let f = f32(i) / NUM;
+    let x = (f - 0.5) * 2.8;
+    // Scrolled coordinate: moves rightward as t increases
+    let sx = x - t * speed;
+    // Spectrum lookup wraps for seamless scroll
+    let spec_f = fract(sx * 0.4 + 0.5);
+    let sidx = spec_start + i32(spec_f * span);
+    let s = spec(clamp(sidx, 0, 31));
+    // Multi-harmonic base shape, character varies by band
+    let w1 = sin(sx * (5.0 + harmonic_mix * 5.0)) * 0.10;
+    let w2 = sin(sx * (13.0 + harmonic_mix * 10.0) + 0.7) * 0.05;
+    let w3 = sin(sx * 2.5 + t * 0.4) * 0.07;
+    // Treble-driven high-frequency jitter (the "vibration")
+    let jit = sin(sx * 48.0 + t * 28.0) * jitter * (0.25 + s * 0.75)
+            + sin(sx * 71.0 + t * 19.0 + 1.3) * jitter * 0.5 * s;
+    let y = cy_s + (w1 + w2 + w3 + jit) * (1.0 + s * 1.5) + s * amp;
+    let pt = vec2<f32>(x, y);
+    if (i > 0) { min_d = min(min_d, dist_to_seg(pos, prev, pt)); }
+    prev = pt;
+  }
+  return min_d;
+}
+
+// 4-layer phosphor glow, width controlled per-band
+fn phosphor_glow(d: f32, width_scale: f32) -> vec3<f32> {
+  let core     = 3.5 * exp(-d * d * (1300.0 / width_scale));
+  let glow     = 0.6 * exp(-d * d * (220.0 / width_scale));
+  let halo     = 0.22 * exp(-d * d * (38.0 / width_scale));
+  let halation = 0.07 * exp(-d * d * (8.0 / width_scale));
+  return vec3<f32>(core, glow, halo + halation);
+}
+
+fn material(input: MaterialInput) -> vec4<f32> {
+  let p = input.local_position;
+  let t = input.time_seconds;
+  let energy   = view.extras[8][0];
+  let bass     = view.extras[8][1];
+  let treble   = view.extras[8][3];
+  let centroid = view.extras[9][0];
+  let onset    = view.extras[9][1];
+  let beat     = view.extras[9][2];
+
+  let pos = vec2<f32>((p.x - 0.5) * 2.0, (p.y - 0.5) * 2.0);
+
+  // Per-band spectrum energy (captures more musical detail)
+  let be0 = band_energy(0, 8);    // bass
+  let be1 = band_energy(4, 16);   // low-mid
+  let be2 = band_energy(10, 24);  // high-mid
+  let be3 = band_energy(18, 32);  // treble
+
+  // === SPEED: base * (1 + global energy + band energy + centroid) ===
+  // Bass-heavy sections speed up the bottom bands, bright sections speed up top
+  let speed0 = 0.16 * (1.0 + energy * 2.0 + be0 * 1.5 + centroid * 0.4);
+  let speed1 = 0.30 * (1.0 + energy * 1.8 + be1 * 1.3 + centroid * 0.5);
+  let speed2 = 0.46 * (1.0 + energy * 1.6 + be2 * 1.1 + centroid * 0.6);
+  let speed3 = 0.62 * (1.0 + energy * 1.4 + be3 * 1.0 + centroid * 0.7);
+
+  // === SHAKE: onset-driven vertical vibration + beat kick ===
+  // Each band has different phase so they don't move in lockstep
+  let shake0 = onset * 0.07 * sin(t * 37.0) + beat * 0.05;
+  let shake1 = onset * 0.06 * sin(t * 43.0 + 1.1) + beat * 0.045;
+  let shake2 = onset * 0.05 * sin(t * 47.0 + 2.2) + beat * 0.04;
+  let shake3 = onset * 0.04 * sin(t * 53.0 + 3.3) + beat * 0.035;
+
+  // Treble global jitter (high-freq vibration on all bands)
+  let jit = treble * 0.055;
+
+  // === THICKNESS: per-band energy + beat + onset ===
+  let ws0 = 1.0 + be0 * 2.8 + beat * 2.0 + onset * 0.9;
+  let ws1 = 1.0 + be1 * 2.5 + beat * 1.8 + onset * 0.8;
+  let ws2 = 1.0 + be2 * 2.2 + beat * 1.6 + onset * 0.7;
+  let ws3 = 1.0 + be3 * 2.0 + beat * 1.4 + onset * 0.6;
+
+  // Compute 4 band distances
+  let d0 = band(pos, -0.62, speed0, 0.15 + be0 * 0.35, t, 0, 8,  shake0, jit, 0.0);
+  let d1 = band(pos, -0.22, speed1, 0.12 + be1 * 0.30, t, 4, 16, shake1, jit, 0.35);
+  let d2 = band(pos,  0.20, speed2, 0.10 + be2 * 0.25, t, 10, 24, shake2, jit, 0.7);
+  let d3 = band(pos,  0.62, speed3, 0.08 + be3 * 0.22, t, 18, 32, shake3, jit, 1.0);
+
+  // Phosphor colors: green (bottom) → cyan → teal (top)
+  let col_green = vec3<f32>(0.08, 1.0, 0.32);
+  let col_cyan  = vec3<f32>(0.0, 0.78, 1.0);
+  let col_teal  = vec3<f32>(0.0, 0.42, 0.6);
+  let col_hot   = vec3<f32>(0.88, 1.0, 0.68);
+
+  // Lower overall intensity for transparent background
+  let intensity = 0.28 + energy * 0.40 + onset * 0.22;
+
+  var col = vec3<f32>(0.0, 0.0, 0.0);
+
+  // Band 0 — bottom, bass-driven, green
+  let g0 = phosphor_glow(d0, ws0);
+  col += col_green * (g0.x + g0.y) * intensity + col_teal * g0.z;
+
+  // Band 1 — lower-mid, green-cyan
+  let g1 = phosphor_glow(d1, ws1);
+  let c1 = mix(col_green, col_cyan, 0.35);
+  col += c1 * (g1.x + g1.y) * intensity + col_teal * g1.z;
+
+  // Band 2 — upper-mid, cyan
+  let g2 = phosphor_glow(d2, ws2);
+  col += col_cyan * (g2.x + g2.y) * intensity + col_teal * g2.z;
+
+  // Band 3 — top, treble-driven, cyan-teal
+  let g3 = phosphor_glow(d3, ws3);
+  let c3 = mix(col_cyan, col_teal, 0.4);
+  col += c3 * (g3.x + g3.y) * intensity + col_teal * g3.z;
+
+  // Beat flash — warm white burst near the nearest band
+  let beat_d = min(min(d0, d1), min(d2, d3));
+  col += col_hot * beat * 0.15 * exp(-beat_d * beat_d * 55.0);
+
+  // CRT vignette (fades glow at edges, keeps center transparent)
+  col *= smoothstep(1.6, 0.15, length(pos));
+
+  // Soft phosphor tone-mapping
+  col = col / (1.0 + col * 0.35);
+
+  // CRT scanlines — subtle, only affects bright areas
+  let scanline = 1.0 - 0.03 * (0.5 + 0.5 * sin(p.y * 720.0));
+  col *= scanline;
+
+  // Alpha: only where waveforms are, fully transparent elsewhere
+  let nearest_d = min(min(d0, d1), min(d2, d3));
+  let alpha = clamp(smoothstep(0.38, 0.01, nearest_d) * (0.25 + energy * 0.30), 0.0, 0.55);
+  if (alpha < 0.006) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
   return vec4<f32>(col, alpha);
 }
 `;
@@ -687,7 +896,8 @@ export function pulseShaderPackages(): ShaderPackage[] {
     packageFor("pulse-neon-ring", 12, pulseNeonRing),
     packageFor("pulse-splash", 2, pulseSplashSource(SPLASH_REVEAL_SECONDS)),
     packageFor("pulse-scanline", 1, pulseScanline),
-    packageFor("pulse-audio-viz", 6, pulseAudioViz),
+    packageFor("pulse-audio-viz", 7, pulseAudioViz),
+    packageFor("pulse-audio-bg", 2, pulseAudioBg),
     packageFor("pulse-page-transition", 1, pulsePageTransition),
   ];
 }
