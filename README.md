@@ -82,6 +82,8 @@ npm run case:window -- shop
 
 全屏亚克力毛玻璃音乐播放器，支持网易云 NCM 解密、封面提取、实时音频可视化和播放列表。
 
+![音乐播放器演示](assets/music-player/音乐播放器.gif)
+
 **一键启动（Windows）：**
 
 ```powershell
