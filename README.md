@@ -93,7 +93,7 @@ cd node
 
 ```powershell
 cd node
-$env:NEON3_RUNTIME_VERSION = "v0.2.6"
+$env:NEON3_RUNTIME_VERSION = "v0.2.7"
 $env:NEON_ROOT = "D:\Neon3"
 $env:NEON_WINDOW_BACKDROP = "acrylic"
 $env:NEON_WINDOW_CHROME = "borderless"
