@@ -72,12 +72,11 @@ if (!def) {
 
 const state = def.initialState() as Record<string, unknown>;
 const store = new ObservableStore({ enabled: true });
-// Use the locally fixed Neon3 v0.2.5 runtime by default. Set NEON_ROOT to a
-// different runtime root when testing an installed release; the SDK expects
-// target/release/*.exe below that root.
-const runtimeVersion = process.env.NEON3_RUNTIME_VERSION ?? "v0.2.5";
+// Use the Neon3 v0.2.7 runtime by default (auto-downloaded from GitHub
+// release). Set NEON_ROOT to a local runtime root for development; the SDK
+// expects target/release/*.exe below that root.
+const runtimeVersion = process.env.NEON3_RUNTIME_VERSION ?? "v0.2.7";
 const neonRoot = process.env.NEON_ROOT
-  ?? (runtimeVersion === "v0.2.5" ? "D:\\Neon3" : undefined)
   ?? (runtimeVersion === "latest"
     ? undefined
     : `${process.env.LOCALAPPDATA ?? ""}\\Neon3Sdk\\runtime\\${runtimeVersion}`);

@@ -1,7 +1,7 @@
 // Multi-case test runner.
 //   L0 offline: pure domain rules run a deterministic intent sequence (JSONL).
 //   L1 static:  scanFlow / validateFlowSource against the closed vocabulary.
-//   L2 runtime: start the real v0.2.5 runtime (headless) and dispatch intents.
+//   L2 runtime: start the real v0.2.7 runtime (headless) and dispatch intents.
 //
 // Usage:
 //   node dist/src/run.js [--runtime] [--case <id>] [--timeout-ms <n>]
@@ -109,7 +109,7 @@ function runStatic(def: CaseDef) {
 async function runRuntime(def: CaseDef) {
   const records: unknown[] = [];
   const session = new RuntimeSession({
-    mode: "headless", runtimeVersion: "v0.2.5", timeoutMs: 20000,
+    mode: "headless", runtimeVersion: "v0.2.7", timeoutMs: 20000,
     eventd: endpoint(39101), ui: endpoint(39102), wgpu: endpoint(39103), domain: endpoint(39104),
   });
   try {
